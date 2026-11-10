@@ -8,7 +8,7 @@
 | Auditoría DTS stock ↔ parches | ✅ | `tools/audit_vince_hw.py`: solo falta el watchdog, que LK deja apagado |
 | Shim + texto en pantalla | ✅ | MMU 4K, GICv2 y timer virtual OK en el teléfono |
 | XNU 1 núcleo (GICv2 + timer) | ✅ | Kernel completo hasta `Waiting on ... Apple_HFS` (sin root) |
-| Root en eMMC → launchd | 🧪 listo para probar | `ios16-root.simg` + `vince-boot-root.img` |
+| Root en eMMC → launchd | 🟡 parcial | Raíz montada y launchd ejecutándose; panic por `launchd_cache_loader` (faltaban boot-args) |
 | Emulación LSE/LDAPR | ❌ falta | Upstream no la tiene; candidato: portar topaz 0081 |
 | SMP 8 núcleos | ⏳ | |
 | SpringBoard / lock screen | ⏳ | |
@@ -90,3 +90,6 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
   - `mkiosroot.sh` falló tras copiar con `install: invalid user: '272'` (uutils coreutils de Ubuntu 26.04). Se corrigió el script y se reanudó a mano (logd + keybag) sin repetir la copia; `mkroot_vince.sh` se salta `mkiosroot.sh` si la imagen ya existe.
   - `sweet-root-tweaks.py`: 7 `_PanicOnCrash` renombrados, 2 jobs de CommCenter quitados, containers creados, VirtualAudio desactivado, StartRecorderServer off (D22, D221, Default), Setup saltado. Aviso: "no mobileactivationd system container in the image; skipped data ark". Según sweet, el estado activado sale de las propiedades `/chosen` de seguridad del ADT, que `mkadt_vince.py` define.
 - Siguiente paso: `fastboot -S 512M flash userdata ios16-root.simg` y arrancar `vince-boot-root.img`.
+- `userdata` flasheado con `ios16-root.simg` (`-S 512M` falló en el bloque 9: `max-download-size` es `0x1fe00000`; repetido con un bloque menor). El último `Writing` tarda bastante, pero termina.
+- **Primer arranque con raíz iOS** (`vince-boot-root.img` `61b631e3…`): XNU monta la raíz desde la eMMC y ejecuta userland de iOS. Panic: `launchd_cache_loader[22] exited -- exit reason namespace 7 subcode 0x1 description: Unable to find AMFI`, `iBoot version: vince-shim`, `secure boot?: NO`. Causa: faltaban los boot-args de userland de ios-sweet (`launchd_unsecure_cache=1`, `ignition_level=1`, `unentitled_ios_sim_launch=1`). Hecho relevante: **dyld y launchd del iPhone X arrancan en el Cortex-A53**, así que al menos esa parte del userland no tropieza con LSE.
+- Nueva `vince-boot-root.img` con esos boot-args.

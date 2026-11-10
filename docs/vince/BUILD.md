@@ -64,7 +64,12 @@ fastboot -S 256M flash userdata ../rootwork/ios16-root.simg       # ⚠️ borra
   las extrae, llama a `tools/mkiosroot.sh`, monta la imagen, aplica `tools/sweet-root-tweaks.py` y genera la sparse con `img2simg`.
 - `tools/mkiosroot.sh` y `tools/sweet-root-tweaks.py` vienen de ios-sweet @ `45263be`. Único cambio: el HFS+ va **sin journal**,
   como en upstream vince (0095 permite montar la raíz sucia en escritura tras un reset).
-- Arranque con raíz: `vince-boot-root.img` (payload con `rd=mmcroot0 mmcroot=userdata mmcrw=1 rootrw=1`). `vince_mmc` solo escribe
+- Arranque con raíz: `vince-boot-root.img`, payload con este cmdline (los boot-args de userland son los de ios-sweet):
+  ```
+  debug=0xc serial=3 cpus=1 keepsyms=1 -enable_kprintf_spam -noprogress rd=mmcroot0 mmcroot=userdata mmcrw=1 rootrw=1
+  unentitled_ios_sim_launch=1 ignition_level=1 launchd_unsecure_cache=1 wdt=-1 wdt_test=no_user_checkin sweettouch=0 sweetkeys=0
+  ```
+  Sin `launchd_unsecure_cache=1`, `launchd_cache_loader` sale con "Unable to find AMFI" y launchd hace panic. `vince_mmc` solo escribe
   con `mmcrw=1`, solo en `userdata` y tras pasar un self-test de escritura en un sector posterior al volumen HFS+.
 
 ## 5. Auditoría de hardware
