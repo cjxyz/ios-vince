@@ -52,9 +52,8 @@ trap 'sudo umount "$mnt" 2>/dev/null || true' EXIT
 sudo python3 "$tools/sweet-root-tweaks.py" "$mnt"
 sudo umount "$mnt"
 trap - EXIT
-# Linux leaves the journaled volume's header needing a "minor repair" after the forced read-write mount.
-fsck.hfsplus -f -y "$img" >/dev/null || true
-fsck.hfsplus -f -n "$img"
+# Verify with -y (see tools/mkiosroot.sh): fsck -n reports a spurious header "minor repair" on this journaled volume.
+fsck.hfsplus -f -y "$img" | tee /dev/stderr | grep -q 'appears to be OK'
 
 img2simg "$img" "$work/ios16-root.simg"
 ls -la "$work/ios16-root.simg"
