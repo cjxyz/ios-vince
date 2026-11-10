@@ -33,7 +33,7 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
 - Revisado el repo: 177 entradas en `xnu/patches` (sweet 0001–0081 + vince 0090–0181); workflows `xnu-vince` y `userland`; shim C/ASM; tools ADT, payload y bootimg.
 - Hardware del kernel stock documentado en [HARDWARE.md](HARDWARE.md). Concuerda con upstream en GICv2 (`0x0B000000`/`0x0B002000`), timer INTID 20, eMMC `0x7824900`, touch @0x20 en I2C-3 y GPIO 64/65.
 - Decisión: la rama de trabajo `vince-port` parte de `c3c7b7f`, el último build verde de upstream. `main` del fork sigue igual que upstream.
-- Identidad git del repo: `cjxyz <cjxyzt@gmail.com>`.
+- Identidad git del repo: `cjxyz <cjxyz776@gmail.com>`.
 - Primer CI en el fork cancelado: GitHub retiró el runner `macos-14` ("configuration 'macos-14-arm64-us-default' is not supported"). Workflows pasados a `macos-15`. Riesgo: el Xcode más antiguo de esa imagen debe generar un `iig` compatible con la ABI IORPC de xnu-8796.
 - CI relanzado en `macos-15` (run 42761468387).
 - `tools/audit_vince_hw.py` (auditoría DTS stock ↔ repo): coinciden GICD/GICC, eMMC SDHCI y core, QUP3, SPMI, cont_splash y GPIO 64/65/85. **Falta**: watchdog `0xB017000`. No aparecen ni la UART `0x78AF000` ni WCNSS `0x0A000000` (sin uso directo por ahora).
