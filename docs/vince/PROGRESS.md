@@ -39,7 +39,7 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
 - `tools/audit_vince_hw.py` (auditoría DTS stock ↔ repo): coinciden GICD/GICC, eMMC SDHCI y core, QUP3, SPMI, cont_splash y GPIO 64/65/85. **Falta**: watchdog `0xB017000`. No aparecen ni la UART `0x78AF000` ni WCNSS `0x0A000000` (sin uso directo por ahora).
 - **CI verde** (run 42761468387): macos-15, Xcode 16.0, 9m35s. Artefacto `kernel.development.vince` (Mach-O arm64, 17 765 336 B), descargado en `out/kernel/` (ignorado por git).
   - Se aplican 137 parches; **se saltan 45 "opcionales"**: sweet 0031, 0033, 0035–0036, 0038, 0040, 0043–0047, 0050–0051, 0053–0056, 0058–0081, más los de dxb TrustCache, iobuffermemd_monterey, skywalk_sonoma y syntax_checker_sonoma. Los logs de upstream caducaron y no se pueden comparar.
-  - Aun así, el binario contiene los símbolos de esas funciones (IOMobileFramebuffer, AppleKeyStore, `sweet_amfi`, SweetWatchdog, IOHIDEventService) y los drivers vince (`vince_mmc`, `mmcroot`, `vincetouch`, `vincekeys`, `vincesmd`, VinceWLANController, `vince_bt_*`, `vince_vtimer_intid`). Parece que los parches vince ya incluyen ese contenido. Por confirmar que no se haya perdido nada (p. ej. sweet 0065 PSCI frente a vince 0101).
+  - Aun así, el binario contiene los símbolos de esas funciones (IOMobileFramebuffer, AppleKeyStore, `sweet_amfi`, SweetWatchdog, IOHIDEventService) y los drivers vince (`vince_mmc`, `mmcroot`, `vincetouch`, `vincekeys`, `vincesmd`, VinceWLANController, `vince_bt_*`, `vince_vtimer_intid`). Los parches vince ya incluyen ese contenido (verificado más abajo).
   - Pendiente: desensamblar el kernel buscando LSE/LDAPR/PAC (no hay `llvm-objdump` en WSL; instalar LLVM, que además hace falta para el shim).
 - Siguiente paso: luego decidir entre desactivar el watchdog en el shim o portar la emulación LSE.
 - Rutas corregidas: `shim/build.py` usa `shim/` y `build/shim/` del propio repo; las tools importan `adt` desde `tools/`.
@@ -50,3 +50,10 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
 - DTB sin root: `tools/mkdtb_vince.sh` compila `dtc` desde `vince-stock/scripts/dtc` y genera `stock_vince.dtb` (358 630 B, msm-id 0x125, board-id 0x1000b/0x8). Es reproducible byte a byte.
 - Imagen de diagnóstico lista: `artifacts/vince-boot-diag.img` (shim + DTB stock, sin ramdisk). SHA256 `c91545eb…`.
 - Siguiente paso: primera prueba en el teléfono (`fastboot boot artifacts/vince-boot-diag.img`). Lo esperado: fondo azul marino con PROJECT/DEVICE/CPU/FDT, MMU, GIC y TIMER, y luego `LOADER: no initrd in /chosen`. Watchdog: si reinicia a los ~11 s, LK lo dejó activo.
+- **Parches saltados verificados** contra el árbol parcheado del CI (artefacto `xnu-buildtree`), comprobando si las líneas que añade cada parche existen ya en el código:
+  - 12 aplican al revés limpiamente (su contenido está tal cual): 0036, 0044, 0045, 0063, 0064, 0066, 0068, 0069, 0074, 0076, 0081 y otros.
+  - La mayoría tiene entre el 90 y el 100 % de sus líneas presentes: se integraron en parches posteriores y luego evolucionaron.
+  - Por debajo del 90 %: 0031, 0059, 0070 y 0071. Las líneas que faltan son guardas `ARM64_BOARD_CONFIG_SWEET` que en el árbol son `SWEET || VINCE`, y en 0071 el borde del touch, ya adaptado a vince (`fMinX/fMaxX`, `SWEET_TOUCH_PANEL_H`).
+  - 0065 y 0078 (SMP de sweet, GICv3, 6+2 núcleos) están sustituidos por el SMP PSCI/GICv2 de vince en `osfmk/arm64/cpu.c` (bloques `VINCE`, parches 0101–0112).
+  - Los 4 de dxb (TrustCache, iobuffermemd_monterey, skywalk_sonoma, syntax_checker_sonoma) son de otras versiones de macOS y no aplican a xnu-8796.
+  - Conclusión: **no se pierde funcionalidad**. Mejora posible: que el workflow use una lista explícita de parches saltados esperados y falle ante cualquier otro.
