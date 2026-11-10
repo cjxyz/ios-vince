@@ -149,4 +149,6 @@ sudo umount "$work/root"
 # Linux hfsplus decomposes some non-ASCII names (localized Shortcuts examples)
 # differently from Apple's tables; let fsck_hfs rewrite them, then verify.
 fsck.hfsplus -f -y "$out" | grep -v 'Illegal name' || true
+# Linux leaves a journaled volume's header needing a "minor repair" after a forced read-write mount: fix it too.
+fsck.hfsplus -f -y "$out" >/dev/null || true
 fsck.hfsplus -f -n "$out"
