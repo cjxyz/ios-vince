@@ -4,7 +4,7 @@
 | Etapa | Estado | Notas |
 |---|---|---|
 | Fork y documentación | ✅ | 2026-11-10 |
-| CI del kernel en verde (este fork) | ⏳ | Upstream: último verde `c3c7b7f` (26 oct); los 4 commits posteriores (VinceGPU) fallaron o se cancelaron |
+| CI del kernel en verde (este fork) | ✅ | Run 42761468387, macos-15 + Xcode 16.0, 9m35s, `kernel.development.vince` de 17 MB |
 | Auditoría DTS stock ↔ parches | ✅ | `tools/audit_vince_hw.py`: solo falta el watchdog |
 | Shim + texto en pantalla | ⏳ | |
 | XNU 1 núcleo (GICv2 + timer) | ⏳ | |
@@ -37,4 +37,8 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
 - Primer CI en el fork cancelado: GitHub retiró el runner `macos-14` ("configuration 'macos-14-arm64-us-default' is not supported"). Workflows pasados a `macos-15`. Riesgo: el Xcode más antiguo de esa imagen debe generar un `iig` compatible con la ABI IORPC de xnu-8796.
 - CI relanzado en `macos-15` (run 42761468387).
 - `tools/audit_vince_hw.py` (auditoría DTS stock ↔ repo): coinciden GICD/GICC, eMMC SDHCI y core, QUP3, SPMI, cont_splash y GPIO 64/65/85. **Falta**: watchdog `0xB017000`. No aparecen ni la UART `0x78AF000` ni WCNSS `0x0A000000` (sin uso directo por ahora).
-- Siguiente paso: resultado del CI; luego decidir entre desactivar el watchdog en el shim o portar la emulación LSE.
+- **CI verde** (run 42761468387): macos-15, Xcode 16.0, 9m35s. Artefacto `kernel.development.vince` (Mach-O arm64, 17 765 336 B), descargado en `out/kernel/` (ignorado por git).
+  - Se aplican 137 parches; **se saltan 45 "opcionales"**: sweet 0031, 0033, 0035–0036, 0038, 0040, 0043–0047, 0050–0051, 0053–0056, 0058–0081, más los de dxb TrustCache, iobuffermemd_monterey, skywalk_sonoma y syntax_checker_sonoma. Los logs de upstream caducaron y no se pueden comparar.
+  - Aun así, el binario contiene los símbolos de esas funciones (IOMobileFramebuffer, AppleKeyStore, `sweet_amfi`, SweetWatchdog, IOHIDEventService) y los drivers vince (`vince_mmc`, `mmcroot`, `vincetouch`, `vincekeys`, `vincesmd`, VinceWLANController, `vince_bt_*`, `vince_vtimer_intid`). Parece que los parches vince ya incluyen ese contenido. Por confirmar que no se haya perdido nada (p. ej. sweet 0065 PSCI frente a vince 0101).
+  - Pendiente: desensamblar el kernel buscando LSE/LDAPR/PAC (no hay `llvm-objdump` en WSL; instalar LLVM, que además hace falta para el shim).
+- Siguiente paso: luego decidir entre desactivar el watchdog en el shim o portar la emulación LSE.
