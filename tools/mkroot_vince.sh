@@ -6,7 +6,7 @@
 # 1. reads BuildManifest.plist and extracts the OS, SystemOS and AppOS cryptex images to WORKDIR
 # 2. tools/mkiosroot.sh -> WORKDIR/ios16-root.img (non-journaled HFS+)
 # 3. mounts it and runs tools/sweet-root-tweaks.py (launchd, Setup, activation, audio)
-# 4. fsck, then img2simg -> WORKDIR/ios16-root.simg, ready for `fastboot -S 512M flash userdata`
+# 4. fsck, then img2simg -> WORKDIR/ios16-root.simg, ready for `fastboot -S 256M flash userdata`
 #
 # Needs: unzip, apfs-fuse, hfsprogs (mkfs.hfsplus, fsck.hfsplus), rsync, img2simg (android-sdk-libsparse-utils)
 # and sudo (mounting and copying as root). SIZE must stay below the userdata partition: vince_mmc's write
@@ -56,4 +56,4 @@ fsck.hfsplus -f -n "$img"
 
 img2simg "$img" "$work/ios16-root.simg"
 ls -la "$work/ios16-root.simg"
-echo "flash with: fastboot -S 512M flash userdata $work/ios16-root.simg"
+echo "flash with: fastboot -S 256M flash userdata $work/ios16-root.simg"

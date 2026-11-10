@@ -57,8 +57,9 @@ versión exacta (`linux-msft-wsl-$(uname -r)`), compila solo `fs/hfsplus` como m
 
 ```
 tools/mkroot_vince.sh ../ipsw/iPhone10,3_16.7.16_20H392_Restore.ipsw ../rootwork [16G]
-fastboot -S 512M flash userdata ../rootwork/ios16-root.simg       # ⚠️ borra los datos de Android
+fastboot -S 256M flash userdata ../rootwork/ios16-root.simg       # ⚠️ borra los datos de Android
 ```
+- LK de vince: `max-download-size` = `0x1fe00000` (510 MiB). Con `-S 512M` algún bloque sparse lo supera (`FAILED (remote: 'data too large')`); usar `-S 256M`.
 - `mkroot_vince.sh` saca del `BuildManifest.plist` las rutas de OS, Cryptex1,SystemOS y Cryptex1,AppOS (identidad D22AP Erase),
   las extrae, llama a `tools/mkiosroot.sh`, monta la imagen, aplica `tools/sweet-root-tweaks.py` y genera la sparse con `img2simg`.
 - `tools/mkiosroot.sh` y `tools/sweet-root-tweaks.py` vienen de ios-sweet @ `45263be`. Único cambio: el HFS+ va **sin journal**,
