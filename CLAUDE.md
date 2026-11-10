@@ -16,3 +16,22 @@ Reglas:
 - Arrancar siempre con `fastboot boot`, nunca flashear `boot`.
 - Rama de trabajo: `vince-port` (parte de `c3c7b7f`, último build verde de upstream). CI manual: `gh workflow run xnu-vince --ref vince-port`.
 - Remotos: `origin` = cjxyz/ios-vince, `upstream` = arabaci0711-ux/ios-vince.
+
+## Commits
+Identidad: `cjxyz <cjxyz776@gmail.com>` (git config local del repo), push con la cuenta gh `cjxyz`.
+Mensajes **en inglés**, con esta estructura:
+```
+type(scope): imperative summary [series n/total]
+
+Body explaining what changes and why (the problem, how it was found,
+what the fix does), wrapped at ~76 columns. Bullets are fine for
+several independent points. Refer to other commits of a series by
+phase, not by hash.
+
+Co-Authored-By: ...
+```
+- `type`: feat, fix, perf, refactor, docs, ci, chore, test.
+- `scope`: zona del repo: `shim`, `tools`, `docs`, `ci`, `userland`, o el parche XNU (`xnu/0090`, `xnu/lse`).
+- Verbo en imperativo: "add", "fix", "disable"; no "adds" ni "added".
+- `[series n/total]` solo en cambios por fases, p. ej. `[lse-emu 1/2]`. Los fixes de una fase llevan el mismo indicador.
+- Solo los commits triviales pueden ir sin cuerpo.
