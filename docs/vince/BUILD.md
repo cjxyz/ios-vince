@@ -92,4 +92,6 @@ python3 tools/audit_vince_hw.py [--stock ../vince-stock]   # exit 1 si falta un 
 fastboot boot artifacts/vince-boot.img       # nunca "fastboot flash boot"
 ```
 - Recuperación: mantener **volumen − + power** para volver a fastboot. Android sigue intacto salvo `userdata`.
+- Sin depender del botón de encendido: en iOS, **volumen + y volumen − durante 3 s** reinicia en fastboot (0184); desde apagado,
+  **volumen −** y conectar el USB; entre pruebas, `fastboot reboot bootloader`.
 - Volver a Android: `fastboot erase userdata` (o restaurar el backup) y reiniciar.

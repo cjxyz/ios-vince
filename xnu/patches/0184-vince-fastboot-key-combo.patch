@@ -1,0 +1,140 @@
+diff --git a/bsd/dev/vince_input.c b/bsd/dev/vince_input.c
+index c5375e5..9c17cc5 100644
+--- a/bsd/dev/vince_input.c
++++ b/bsd/dev/vince_input.c
+@@ -19,6 +19,9 @@
+  * (vince-bringup/shim/touch.c). The only controller writes are the RMI4
+  * page select (0xFF).
+  *
++ * Holding both volume keys for 3 s reboots into fastboot (vince_pmic.c), for
++ * phones whose power button is unreliable.
++ *
+  * Boot-args: vincekeys=0 / vincetouch=0 turn a source off.
+  */
+ #if defined(ARM64_BOARD_CONFIG_VINCE)
+@@ -36,6 +39,7 @@ extern void sweet_hid_key(int key, int down);
+ extern void sweet_hid_touch(int finger, int down, int x, int y);
+ void vince_input_start(void);
+ extern void vince_adreno_init(void);
++extern void vince_reboot_bootloader(void);
+ 
+ #define SPMI_CORE_PA    0x0200f000u
+ #define SPMI_CNFG_PA    0x0200a000u
+@@ -53,6 +57,8 @@ extern void vince_adreno_init(void);
+ #define GPIO_RST        64
+ #define GPIO_ATTN       65
+ #define GPIO_VOLUP      85
++#define KEYS_POLL_MS    20
++#define FASTBOOT_HOLD_MS 3000           /* both volume keys held this long: reboot into fastboot */
+ 
+ #define GCC_QUP3_PA     0x01804000u     /* blsp1_qup3_i2c_apps: RCG CMD +0, CFG +4, CBCR +0x20 */
+ #define QUP3_PA         0x078b7000u
+@@ -170,7 +176,7 @@ static void
+ keys_thread(void *arg, wait_result_t result)
+ {
+ 	int state[3] = {0, 0, 0};
+-	unsigned errors = 0;
++	unsigned errors = 0, both_ms = 0;
+ 	(void)arg;
+ 	(void)result;
+ 	for (;;) {
+@@ -187,7 +193,12 @@ keys_thread(void *arg, wait_result_t result)
+ 				sweet_hid_key(k, state[k]);
+ 			}
+ 		}
+-		in_sleep(&keys_chan, 20);
++		/* keys 1 and 2 are volume up and down */
++		both_ms = (state[1] && state[2]) ? both_ms + KEYS_POLL_MS : 0;
++		if (both_ms >= FASTBOOT_HOLD_MS) {
++			vince_reboot_bootloader();
++		}
++		in_sleep(&keys_chan, KEYS_POLL_MS);
+ 	}
+ }
+ 
+diff --git a/bsd/dev/vince_pmic.c b/bsd/dev/vince_pmic.c
+index 77c3116..83f02e6 100644
+--- a/bsd/dev/vince_pmic.c
++++ b/bsd/dev/vince_pmic.c
+@@ -315,4 +315,81 @@ vince_wled_set(int on)
+ 	}
+ 	return r;
+ }
++
++/*
++ * Reboot into LK's fastboot, what Linux's "reboot bootloader" does (msm-poweroff.c, qpnp-power-on.c): the reason goes
++ * to IMEM restart_reason (0x0860065c = 0x77665500, read by LK) and to PON SOFT_RB_SPARE, the PMIC is set for a warm
++ * reset on PS_HOLD (a hard reset would clear IMEM), then PSCI SYSTEM_RESET, with a PS_HOLD drop as the fallback.
++ * For a flaky power button: vince_input.c calls this when both volume keys are held.
++ */
++#define PON_PPID                0x008u
++#define PON_REVISION2           0x01u
++#define PON_SUBTYPE             0x05u
++#define PON_PS_HOLD_RST_CTL     0x5Au
++#define PON_PS_HOLD_RST_CTL2    0x5Bu
++#define PON_SOFT_RB_SPARE       0x8Fu
++#define PON_RESET_EN            0x80u
++#define PON_WARM_RESET          0x01u
++#define PON_REASON_BOOTLOADER   0x02u
++#define IMEM_PA                 0x08600000u
++#define IMEM_RESTART_REASON     0x65Cu
++#define RESTART_FASTBOOT        0x77665500u
++#define MPM_PS_HOLD_PA          0x004AB000u
++#define PSCI_SYSTEM_RESET       0x84000009u
++
++static int
++pon_masked_write(unsigned reg, uint8_t mask, uint8_t val)
++{
++	uint8_t cur;
++
++	if (vince_pmic_read(PON_PPID, reg, &cur)) {
++		return -1;
++	}
++	return vince_pmic_write(PON_PPID, reg, (uint8_t)((cur & ~mask) | (val & mask)));
++}
++
++void
++vince_reboot_bootloader(void)
++{
++	uint8_t subtype = 0, rev2 = 0;
++	vm_offset_t imem, ps_hold;
++	int gen2, gen1_v1;
++	unsigned rst_en;
++
++	printf("VINCE: rebooting into fastboot\n");
++	if (vince_pmic_init() == 0 && !vince_pmic_read(PON_PPID, PON_SUBTYPE, &subtype) &&
++	    !vince_pmic_read(PON_PPID, PON_REVISION2, &rev2)) {
++		gen2 = subtype == 0x04 || subtype == 0x05;
++		gen1_v1 = (subtype == 0x01 || subtype == 0x02) && rev2 == 0;
++		rst_en = gen1_v1 ? PON_PS_HOLD_RST_CTL : PON_PS_HOLD_RST_CTL2;
++		(void)pon_masked_write(rst_en, PON_RESET_EN, 0);
++		delay(500);
++		(void)pon_masked_write(PON_PS_HOLD_RST_CTL, 0x0F, PON_WARM_RESET);
++		(void)pon_masked_write(rst_en, PON_RESET_EN, PON_RESET_EN);
++		if (gen2) {
++			(void)pon_masked_write(PON_SOFT_RB_SPARE, 0xFE, PON_REASON_BOOTLOADER << 1);
++		} else {
++			(void)pon_masked_write(PON_SOFT_RB_SPARE, 0xFC, PON_REASON_BOOTLOADER << 2);
++		}
++		printf("VINCE: PON subtype %#x rev2 %#x, warm reset on PS_HOLD\n", subtype, rev2);
++	} else {
++		printf("VINCE: PON not readable, LK may cold boot instead\n");
++	}
++	imem = ml_io_map(IMEM_PA, 0x1000);
++	if (imem) {
++		*(volatile uint32_t *)(imem + IMEM_RESTART_REASON) = RESTART_FASTBOOT;
++	}
++	__asm__ volatile ("dsb sy" ::: "memory");
++	{
++		register uint64_t x0 __asm__("x0") = PSCI_SYSTEM_RESET;
++		__asm__ volatile ("smc #0" : "+r"(x0) : : "x1", "x2", "x3", "memory");
++	}
++	ps_hold = ml_io_map(MPM_PS_HOLD_PA, 0x1000);
++	if (ps_hold) {
++		*(volatile uint32_t *)ps_hold = 0;
++	}
++	for (;;) {
++		__asm__ volatile ("wfi");
++	}
++}
+ #endif /* ARM64_BOARD_CONFIG_VINCE */
