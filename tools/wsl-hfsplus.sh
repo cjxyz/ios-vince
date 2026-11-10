@@ -8,7 +8,9 @@
 # running kernel's /proc/config.gz with CONFIG_HFSPLUS_FS=m, builds only fs/hfsplus and loads it with insmod.
 # Nothing is installed: after a WSL restart run it again (the build is reused, only insmod repeats).
 #
-# Build deps (once): sudo apt install build-essential flex bison bc libelf-dev libssl-dev
+# Build deps (once): sudo apt install build-essential flex bison bc libelf-dev libssl-dev dwarves
+# (dwarves = pahole: without it olddefconfig silently drops DEBUG_INFO_BTF_MODULES, which changes struct module and
+# makes insmod fail with ".gnu.linkonce.this_module section size must match").
 set -euo pipefail
 
 rel=$(uname -r)                                 # e.g. 6.18.54.1-microsoft-standard-WSL2
@@ -33,6 +35,17 @@ if [[ ! -f $ko ]]; then
 	zcat /proc/config.gz > .config
 	scripts/config --module HFSPLUS_FS
 	make olddefconfig >/dev/null
+	# Options that change struct module must match the running kernel, or insmod rejects the module.
+	for opt in DEBUG_INFO_BTF_MODULES MODULE_UNLOAD KALLSYMS TRACEPOINTS BPF_EVENTS EVENT_TRACING FTRACE_MCOUNT_RECORD \
+		LIVEPATCH MODULE_SIG FUNCTION_ERROR_INJECTION DYNAMIC_DEBUG_CORE PRINTK_INDEX KUNIT CODE_TAGGING; do
+		want=$(zcat /proc/config.gz | grep "^CONFIG_$opt=" || true)
+		have=$(grep "^CONFIG_$opt=" .config || true)
+		if [[ $want != "$have" ]]; then
+			echo "CONFIG_$opt differs: running '${want:-unset}', build '${have:-unset}' (missing build tool? see deps)" >&2
+			rm -f .config
+			exit 1
+		fi
+	done
 	make -j"$(nproc)" modules_prepare
 	# No Module.symvers for the shipped kernel: let modpost warn instead of failing on the kernel's exports.
 	make -j"$(nproc)" M=fs/hfsplus KBUILD_MODPOST_WARN=1 modules
