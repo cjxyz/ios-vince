@@ -13,7 +13,8 @@
 | SMP 8 núcleos | ✅ 7 de 8 | `cpus=7` arranca y va más fluido; falta CPU1 |
 | SpringBoard / lock screen | ✅ | **Pantalla de bloqueo de iOS 16.7.16 en el Redmi 5 Plus** (2026-11-10) |
 | Touch TD4310 + teclas | ✅ | Touch y botones power/volumen funcionan |
-| Retroiluminación (WLED) | ✅ | 0182: se apaga al bloquear |
+| Retroiluminación (WLED) | ✅ | 0182: se apaga al bloquear y vuelve al desbloquear |
+| Rendimiento | 🟡 en curso | Framebuffer a 10 Hz por defecto; CPU a 1,4 GHz (sin CPR); sin GPU |
 | USB ECM / log por red | ⏳ | |
 | Wi‑Fi / BT | ⏳ | parches 0119–0179 de upstream |
 | GPU Adreno 506 | ⏳ | 0181 de upstream; ios-casuarina como referencia |
@@ -111,3 +112,10 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
 - **Parche 0182 `vince-wled-backlight`**: `vince_pmic_write()` (escritura SPMI genérica por el canal propio de las aplicaciones, con la misma comprobación EE 0 que la escritura del RTC y canales cacheados) y `vince_wled_set()`, que cambia solo el bit 7 de `MODULE_EN` (`0xd846`), como `qpnp_wled_module_en()` en Linux. `SweetFramebuffer` lo llama en cada `RequestPowerChange`. Aplica limpio sobre el árbol del CI (`patch --dry-run`).
 - CI del 0182: el run en `macos-15` se quedó en cola más de 8 min por falta de capacidad. Nueva entrada `runner` en el workflow; relanzado con `-f runner=macos-15-intel` (run 42844953204): empezó al instante y quedó **verde en 13 min**, 0182 aplicado, los mismos 45 parches saltados. El kernel contiene `VINCE WLED` y sigue sin LSE/PAC (solo el `ldumaxah` de los datos de `K256`). Nueva `vince-boot-smp.img` (`819a024c…`, `cpus=7`).
 - **0182 probado en el teléfono** (`vince-boot-smp.img` `819a024c…`): al bloquear con power, la pantalla queda negra y **sin retroiluminación**. La escritura SPMI por el canal de las aplicaciones funciona: la WLED del PMI8950 (PPID 0x3d8) pertenece a EE 0.
+- Retroiluminación: vuelve a encenderse al pulsar power. 0182 completo.
+- **Análisis de lentitud**:
+  1. `SweetFramebuffer` refresca el panel a **10 Hz** por defecto (`sweetfb_hz`, "copying 10 MB on every swap took the whole CPU"), así que el touch parece retrasado aunque iOS dibuje más rápido. Sweet usaba 30. Cada flush escala 1125x2436→1080x2160 y convierte 32→24 bpp ("about 9 MB read, 7 MB written; a few ms").
+  2. CPU a **1401,6 MHz**: `vince_cpu_clock_init` (SweetCPU.cpp) arranca el PLL A53 con L=73 a la tensión por defecto de VDD_APC. Pasar de ~1,4 GHz exige control de tensión CPR, que no está implementado ("The A53 PLL for more than 800 MHz… needs CPR voltage control").
+  3. CPU1 sin usar (7/8 núcleos).
+  4. Sin GPU: CoreAnimation renderiza por CPU.
+- Prueba rápida, solo boot-args: `vince-boot-hz30.img` (`08d957de…`) y `vince-boot-hz60.img` (`73a0580b…`), iguales a smp con `sweetfb_hz=30/60`.
