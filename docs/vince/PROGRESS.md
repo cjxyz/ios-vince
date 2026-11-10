@@ -51,7 +51,7 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
 - Imagen de diagnóstico lista: `artifacts/vince-boot-diag.img` (shim + DTB stock, sin ramdisk). SHA256 `c91545eb…`.
 - Siguiente paso: primera prueba en el teléfono (`fastboot boot artifacts/vince-boot-diag.img`). Lo esperado: fondo azul marino con PROJECT/DEVICE/CPU/FDT, MMU, GIC y TIMER, y luego `LOADER: no initrd in /chosen`. Watchdog: si reinicia a los ~11 s, LK lo dejó activo.
 - **Parches saltados verificados** contra el árbol parcheado del CI (artefacto `xnu-buildtree`), comprobando si las líneas que añade cada parche existen ya en el código:
-  - 12 aplican al revés limpiamente (su contenido está tal cual): 0036, 0044, 0045, 0063, 0064, 0066, 0068, 0069, 0074, 0076, 0081 y otros.
+  - 11 aplican al revés limpiamente (su contenido está tal cual): 0036, 0044, 0045, 0063, 0064, 0066, 0068, 0069, 0074, 0076 y 0081.
   - La mayoría tiene entre el 90 y el 100 % de sus líneas presentes: se integraron en parches posteriores y luego evolucionaron.
   - Por debajo del 90 %: 0031, 0059, 0070 y 0071. Las líneas que faltan son guardas `ARM64_BOARD_CONFIG_SWEET` que en el árbol son `SWEET || VINCE`, y en 0071 el borde del touch, ya adaptado a vince (`fMinX/fMaxX`, `SWEET_TOUCH_PANEL_H`).
   - 0065 y 0078 (SMP de sweet, GICv3, 6+2 núcleos) están sustituidos por el SMP PSCI/GICv2 de vince en `osfmk/arm64/cpu.c` (bloques `VINCE`, parches 0101–0112).
