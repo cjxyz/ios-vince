@@ -11,7 +11,7 @@
 | Root en eMMC → launchd | ✅ | launchd pasa las tareas de arranque y lanza LaunchDaemons |
 | Emulación LSE/LDAPR | ❌ falta | Upstream no la tiene; candidato: portar topaz 0081 |
 | SMP 8 núcleos | ⏳ | |
-| SpringBoard / lock screen | 🟡 arranca y se cae | `process 346 crashed SpringBoard: Too many corpses`; launchd lo relanza |
+| SpringBoard / lock screen | ✅ | **Pantalla de bloqueo de iOS 16.7.16 en el Redmi 5 Plus** (2026-11-10) |
 | Touch TD4310 + teclas | ⏳ | 0099 no vota reguladores RPM (L10/L6) |
 | USB ECM / log por red | ⏳ | |
 | Wi‑Fi / BT | ⏳ | parches 0119–0179 de upstream |
@@ -101,3 +101,4 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
   - Causa: raíz HFS+ **sin journal** montada en escritura y dos arranques terminados sin desmontar (panic de launchd y apagado forzado). Al crearla, `fsck` estaba limpio. Upstream vince documenta lo mismo en 0113 ("left it dirty and, twice, corrupt") y lo evitaba con un halt limpio desde el monitor USB de su shim, que este repo no tiene.
   - Decisión: volver al HFS+ **con journal** de sweet (`mkfs.hfsplus -J`). `vince_mmc` atiende `DKIOCSYNCHRONIZE` y escribe de forma síncrona. Hay que reconstruir la imagen y volver a flashear.
 - Imagen raíz reconstruida **con journal** (`mkfs.hfsplus -J`, journal de 8 MB). Detalle: en un volumen con journal montado por Linux (`lastMountedVersion H+Lx`), `fsck.hfsplus -n` informa siempre de "Volume header needs minor repair" (debug: `invalid primary VHB at 2 result 35`), mientras `-y` no cambia nada y dice "appears to be OK". La verificación pasa a usar `-y`. Nueva `ios16-root.simg` generada.
+- 🎉 **PANTALLA DE BLOQUEO.** Con la raíz con journal y el `/product` real del iPhone X (`vince-boot-root.img` `8ffe46e5…`), iOS llega a la pantalla de bloqueo. El texto del kernel sigue dibujándose encima. Nueva imagen con `sweetfb_noconsole=1`. Touch (`vincetouch`) y teclas (`vincekeys`) de vince están activos por defecto: pendiente de confirmar si responden.
