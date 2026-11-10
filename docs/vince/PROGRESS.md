@@ -22,7 +22,7 @@
 2. **LSE/LDAPR/CAS**: no hay emulación en `xnu/patches` (no aparecen `handle_uncategorized`, `ldadd` ni `casal`).
 3. ~~Watchdog `0xB017000`~~: LK lo deja desactivado (comprobado en el teléfono el 2026-11-10). No hace falta tocarlo en el shim.
 4. ~~Rutas rotas en `shim/build.py` y las tools~~: corregidas el 2026-11-10.
-5. **Falta tooling de la imagen raíz** (`mkiosroot.sh`).
+5. ~~Falta tooling de la imagen raíz~~: `tools/mkroot_vince.sh` + `mkiosroot.sh`/`sweet-root-tweaks.py` de ios-sweet (2026-11-10).
 6. **Alimentación del touch**: comprobar si LK deja L10/L6 encendidos.
 
 ## Bitácora
@@ -80,3 +80,5 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
   - `SWEET CPU: 1 CPUs, ... MHz 1401`.
   - `SWEET BATTERY: PM6150 / estimated SOC 15%, 3435mV, external=1` (la etiqueta PM6150 viene de sweet, pero la lectura es plausible).
 - Siguiente etapa: imagen raíz iOS en `userdata` y arranque con `rd=mmcroot0 mmcroot=userdata`.
+- Decisiones del usuario: se puede borrar `userdata` (no importan los datos de Android); la unidad es de **4 GB de RAM**, igual que la de upstream, así que la ventana `0xA0000000`+1,4 GB es coherente.
+- Etapa raíz preparada: IPSW iOS 16.7.16 en descarga; `tools/mkroot_vince.sh` (proceso completo); `vince-boot-root.img` (`61b631e3…`) con `rd=mmcroot0 mmcroot=userdata mmcrw=1 rootrw=1`. Falta: instalar dependencias (sudo) y compilar `apfs-fuse`.

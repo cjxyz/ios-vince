@@ -41,14 +41,22 @@ python3 shim/build.py --dtb artifacts/stock_vince.dtb     # → artifacts/vince-
 - `artifacts/`, `build/` y `out/` están en `.gitignore`.
 
 ## 4. Imagen raíz iOS
-- ⚠️ El repo no incluye las herramientas de ios-sweet `tools/mkiosroot.sh` ni `sweet-root-tweaks.py`. Hay que traerlas de ios-sweet.
-- Fuente: IPSW del iPhone X (iPhone10,3) con iOS 16.7.x. Se unen el volumen OS y los cryptexes en un HFS+ sensible a mayúsculas
-  (requiere apfs-fuse, hfsprogs y android-sdk-libsparse-utils):
-  ```
-  tools/mkiosroot.sh OS.dmg SystemOS.dmg AppOS.dmg ios16-root.img 16G
-  img2simg ios16-root.img ios16-root.simg
-  fastboot -S 512M flash userdata ios16-root.simg
-  ```
+Firmware: iPhone X (iPhone10,3) **iOS 16.7.16 (20H392)**, el mismo que usa ios-sweet:
+`iPhone10,3,iPhone10,6_16.7.16_20H392_Restore.ipsw` (6 171 035 648 B, SHA256 `ece1194f…68fb`, CDN de Apple vía api.ipsw.me).
+
+Dependencias (con sudo): `hfsprogs android-sdk-libsparse-utils` y, para compilar `apfs-fuse` (no está empaquetado en Ubuntu 26.04),
+`cmake g++ libfuse3-dev fuse3 libbz2-dev zlib1g-dev libattr1-dev`.
+
+```
+tools/mkroot_vince.sh ../ipsw/iPhone10,3_16.7.16_20H392_Restore.ipsw ../rootwork [16G]
+fastboot -S 512M flash userdata ../rootwork/ios16-root.simg       # ⚠️ borra los datos de Android
+```
+- `mkroot_vince.sh` saca del `BuildManifest.plist` las rutas de OS, Cryptex1,SystemOS y Cryptex1,AppOS (identidad D22AP Erase),
+  las extrae, llama a `tools/mkiosroot.sh`, monta la imagen, aplica `tools/sweet-root-tweaks.py` y genera la sparse con `img2simg`.
+- `tools/mkiosroot.sh` y `tools/sweet-root-tweaks.py` vienen de ios-sweet @ `45263be`. Único cambio: el HFS+ va **sin journal**,
+  como en upstream vince (0095 permite montar la raíz sucia en escritura tras un reset).
+- Arranque con raíz: `vince-boot-root.img` (payload con `rd=mmcroot0 mmcroot=userdata mmcrw=1 rootrw=1`). `vince_mmc` solo escribe
+  con `mmcrw=1`, solo en `userdata` y tras pasar un self-test de escritura en un sector posterior al volumen HFS+.
 
 ## 5. Auditoría de hardware
 ```
