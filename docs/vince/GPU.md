@@ -58,7 +58,16 @@ declaraciones (`kvtophys` sin declarar, `pmap_paddr_t` desconocido), no por el d
      mismo efecto). `verify_adt_vince.py` comprueba que no se solapan.
    - Licencias: los parches de kernel derivados de HackiOS son APSL 2.0 (como XNU) y el userland es MIT (CREDITS.md de casuarina).
    - ✅ 2026-11-10: self-test 4/4 en el teléfono, tras 0186 (el contador de fences en `scratch+0x20` sobrevivía al reinicio en caliente).
-3. **Portar el stack de casuarina** (kernel 0982–0988 + userland Mesa/EAGL/inject) sobre nuestro árbol. Puntos a resolver:
+3. **Fase B, etapa 1: Mesa + gputest** (2026-11-10):
+   - `userland/mesa/`: script de build, parches Darwin de freedreno/OSMesa y `redwood-drm` (libdrm → IOKit `VinceGPU`), de casuarina/HackiOS (MIT).
+     Mesa 25.0.7 descargado con SHA256 verificado; prefijo `/vince`. `bison`/`flex` vía `brew --prefix` (vale en Intel y arm64).
+   - `.github/workflows/mesa.yml` (manual, entrada `runner`) → artefacto `mesa-ios` (`libOSMesa.8.dylib`, `gputest`).
+   - `userland/gpu/gputest.c`: contexto ES2 de OSMesa, clear rojo, triángulo verde con shader, lee píxeles y falla si el renderer es
+     softpipe. Espera hasta 60 s al servicio `VinceGPU`, porque launchd puede lanzarlo antes que la GPU.
+   - `tools/addgpu_root.sh ROOT.img MESA_DIR`: copia las dos piezas a `/vince/{lib,bin}`, añade el job `com.vince.gputest`
+     (una vez, salida a `/dev/console`) a `/System/Library/xpc/launchd.plist` y regenera la `.simg`.
+   - Arranque de prueba: iOS con `gpu=1` y sin `sweetfb_noconsole`, para ver la salida de `gputest` en pantalla.
+4. **Portar el resto del stack de casuarina** (kernel 0982–0988 + userland Mesa/EAGL/inject) sobre nuestro árbol. Puntos a resolver:
    - encajarlo con nuestro `SweetFramebuffer`/`SweetSurface` (0046);
    - el mapa de RAM: casuarina usa XNU en `0x20000000–0x7fffffff` con el pool arriba; nosotros, XNU en `0xA0000000` y 0181 en `0x47800000`/`0x95000000`;
    - el firmware fuera del árbol si es posible, y Mesa compilado en CI de macOS.
