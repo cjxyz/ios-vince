@@ -27,6 +27,8 @@
 #define GICC_IAR		0x00c
 #define GICC_EOIR		0x010
 
+extern char _head[];
+
 #define VTIMER_INTID	20  /* PPI 4 on MSM8953 (16 + 4) */
 
 #define rsr(r) ({ uint64_t _v; __asm__ volatile("mrs %0, " r : "=r"(_v)); _v; })
@@ -118,10 +120,11 @@ void shim_main(void *fdt)
 	con_str("DEVICE",  "Redmi 5 Plus (MSM8953)");
 	con_str("CPU",     "8x Cortex-A53 ARMv8.0-A");
 	con_hex("FDT",     (uintptr_t)fdt);
+	con_hex("IMAGE",   (uintptr_t)_head);
 
 	/* 2. Setup 4KB Translation Granule MMU */
 	struct mmu_info info;
-	mmu_enable(&info);
+	mmu_enable(&info, (uintptr_t)fdt);
 	con_str("MMU",     "4 KiB Granule Active (TTBR0)");
 
 	/* 3. Setup GICv2 */

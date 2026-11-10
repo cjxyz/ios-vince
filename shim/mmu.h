@@ -9,5 +9,5 @@ struct mmu_info {
 	int n_l3;
 };
 
-int mmu_enable(struct mmu_info *info);
+int mmu_enable(struct mmu_info *info, uintptr_t fdt);
 uint64_t mmu_probe(uintptr_t va);

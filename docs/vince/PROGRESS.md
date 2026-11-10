@@ -6,7 +6,7 @@
 | Fork y documentación | ✅ | 2026-11-10 |
 | CI del kernel en verde (este fork) | ✅ | Run 42761468387, macos-15 + Xcode 16.0, 9m35s, `kernel.development.vince` de 17 MB |
 | Auditoría DTS stock ↔ parches | ✅ | `tools/audit_vince_hw.py`: solo falta el watchdog |
-| Shim + texto en pantalla | 🧪 listo para probar | `artifacts/vince-boot-diag.img` |
+| Shim + texto en pantalla | 🟡 parcial | LK acepta la imagen y el shim pinta la pantalla; se colgaba al activar la MMU (arreglo pendiente de probar) |
 | XNU 1 núcleo (GICv2 + timer) | ⏳ | |
 | Root en eMMC → launchd | ⏳ | |
 | Emulación LSE/LDAPR | ❌ falta | Upstream no la tiene; candidato: portar topaz 0081 |
@@ -57,3 +57,9 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
   - 0065 y 0078 (SMP de sweet, GICv3, 6+2 núcleos) están sustituidos por el SMP PSCI/GICv2 de vince en `osfmk/arm64/cpu.c` (bloques `VINCE`, parches 0101–0112).
   - Los 4 de dxb (TrustCache, iobuffermemd_monterey, skywalk_sonoma, syntax_checker_sonoma) son de otras versiones de macOS y no aplican a xnu-8796.
   - Conclusión: **no se pierde funcionalidad**. Mejora posible: que el workflow use una lista explícita de parches saltados esperados y falle ante cualquier otro.
+- **Primera prueba en el teléfono** (`fastboot boot vince-boot-diag.img`, SHA256 `c91545eb…`):
+  - LK acepta el boot.img v0 con el DTB stock anexado y entrega el control al shim en AArch64.
+  - El framebuffer de splash funciona: fondo azul y líneas PROJECT, DEVICE, CPU y `FDT 0x0000000013400000`.
+  - **Se detiene antes de la línea MMU.** Causa probable: LK ignora las direcciones de la cabecera (`0x80008000`) y carga el shim cerca de `0x10080000`, con el DTB en `0x13400000` (y, según ios-casuarina, el ramdisk en `0x13600000`). `shim/mmu.c` mapeaba todo el GB 0 como Device + PXN, así que tras activar la MMU la siguiente instrucción (y los vectores) abortan en bucle, sin llegar al panic rojo.
+  - Arreglo: `map_normal()` remapea como WB ejecutable los bloques de 2 MB del shim, del DTB (`totalsize`) y del initrd de `/chosen`. El shim muestra además `IMAGE` (dirección real de `_head`, calculada con `adr`). Nueva imagen: `vince-boot-diag.img`, SHA256 `b45d8cf9…`.
+  - Watchdog: pendiente de saber si el teléfono se reinició solo.

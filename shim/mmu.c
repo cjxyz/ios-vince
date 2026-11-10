@@ -11,6 +11,7 @@
  */
 #include <stdint.h>
 #include "mmu.h"
+#include "fdt.h"
 
 #define PG_SHIFT	12
 #define PG_SIZE		(1UL << PG_SHIFT)		/* 4 KiB */
@@ -60,7 +61,21 @@ static void zero_table(uint64_t *t)
 		t[i] = 0;
 }
 
-int mmu_enable(struct mmu_info *info)
+/*
+ * Remap the 2 MB blocks covering [lo, hi) as normal, executable WB memory. LK on vince ignores the boot.img
+ * load addresses and places the shim around 0x10080000, the DTB at 0x13400000 and the ramdisk at 0x13600000,
+ * all inside GB 0, which is otherwise mapped as Device + PXN: fetching the next instruction after the MMU comes
+ * on would fault, and so would the vectors in the same image.
+ */
+static void map_normal(uintptr_t pool, uint64_t lo, uint64_t hi)
+{
+	for (uint64_t a = lo & ~(BLK_SIZE - 1); a < hi && a < (4UL << 30); a += BLK_SIZE) {
+		uint64_t *l2_tbl = (uint64_t *)(pool + (1 + (a >> 30)) * PG_SIZE);
+		l2_tbl[(a >> BLK_SHIFT) & (NENT - 1)] = a | WB_FLAGS | D_BLOCK;
+	}
+}
+
+int mmu_enable(struct mmu_info *info, uintptr_t fdt)
 {
 	uintptr_t img_lo = (uintptr_t)_head & ~(PG_SIZE - 1);
 	uintptr_t img_hi = ((uintptr_t)_end + PG_SIZE - 1) & ~(PG_SIZE - 1);
@@ -115,6 +130,13 @@ int mmu_enable(struct mmu_info *info)
 				l2_tbl[j] = (base_pa + (uint64_t)j * BLK_SIZE) | WB_FLAGS | D_BLOCK;
 		}
 	}
+
+	map_normal(pool, img_lo, img_hi);
+	if (fdt && __builtin_bswap32(*(volatile uint32_t *)fdt) == 0xd00dfeed)
+		map_normal(pool, fdt, fdt + __builtin_bswap32(*(volatile uint32_t *)(fdt + 4)));
+	uint64_t rd_start, rd_end;
+	if (fdt_chosen_u64(fdt, "linux,initrd-start", &rd_start) && fdt_chosen_u64(fdt, "linux,initrd-end", &rd_end))
+		map_normal(pool, rd_start, rd_end);
 
 	/* Commit page table writes to memory */
 	__asm__ volatile("dsb ish" ::: "memory");
