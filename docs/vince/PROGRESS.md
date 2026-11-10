@@ -82,3 +82,5 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
 - Siguiente etapa: imagen raíz iOS en `userdata` y arranque con `rd=mmcroot0 mmcroot=userdata`.
 - Decisiones del usuario: se puede borrar `userdata` (no importan los datos de Android); la unidad es de **4 GB de RAM**, igual que la de upstream, así que la ventana `0xA0000000`+1,4 GB es coherente.
 - Etapa raíz preparada: IPSW iOS 16.7.16 en descarga; `tools/mkroot_vince.sh` (proceso completo); `vince-boot-root.img` (`61b631e3…`) con `rd=mmcroot0 mmcroot=userdata mmcrw=1 rootrw=1`. Falta: instalar dependencias (sudo) y compilar `apfs-fuse`.
+- `apfs-fuse` compilado por el usuario (con `CMAKE_POLICY_VERSION_MINIMUM=3.5` y `-include cstdint` para CMake 4/GCC 15).
+- **Bloqueo**: el kernel WSL2 6.18.54.1 no tiene HFS+, así que `mkiosroot.sh` no puede montar la imagen. Nuevo `tools/wsl-hfsplus.sh`: compila `hfsplus.ko` desde la etiqueta `linux-msft-wsl-6.18.54.1` de Microsoft y lo carga con `insmod` (MODVERSIONS sin `Module.symvers`; plan B: compilar `vmlinux`).

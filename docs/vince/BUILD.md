@@ -47,6 +47,14 @@ Firmware: iPhone X (iPhone10,3) **iOS 16.7.16 (20H392)**, el mismo que usa ios-s
 Dependencias (con sudo): `hfsprogs android-sdk-libsparse-utils` y, para compilar `apfs-fuse` (no está empaquetado en Ubuntu 26.04),
 `cmake g++ libfuse3-dev fuse3 libbz2-dev zlib1g-dev libattr1-dev`.
 
+`apfs-fuse` (sgan81/apfs-fuse) en `~/.local/bin`; con CMake 4 y GCC 15 hace falta:
+```
+cmake .. -DCMAKE_BUILD_TYPE=Release -DUSE_FUSE3=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_CXX_FLAGS="-include cstdint"
+```
+**WSL2 no trae HFS+** (`# CONFIG_HFSPLUS_FS is not set`). `tools/wsl-hfsplus.sh` descarga el código del kernel de Microsoft de la
+versión exacta (`linux-msft-wsl-$(uname -r)`), compila solo `fs/hfsplus` como módulo y lo carga con `insmod`
+(dependencias: `build-essential flex bison bc libelf-dev libssl-dev`). Hay que volver a cargarlo después de reiniciar WSL.
+
 ```
 tools/mkroot_vince.sh ../ipsw/iPhone10,3_16.7.16_20H392_Restore.ipsw ../rootwork [16G]
 fastboot -S 512M flash userdata ../rootwork/ios16-root.simg       # ⚠️ borra los datos de Android
