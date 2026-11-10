@@ -57,6 +57,7 @@ declaraciones (`kvtophys` sin declarar, `pmap_paddr_t` desconocido), no por el d
      `0xec000000`), para que el pool sea RAM que XNU nunca gestiona (casuarina recortaba `memSize` en `arm_vm_init.c` con el
      mismo efecto). `verify_adt_vince.py` comprueba que no se solapan.
    - Licencias: los parches de kernel derivados de HackiOS son APSL 2.0 (como XNU) y el userland es MIT (CREDITS.md de casuarina).
+   - ✅ 2026-11-10: self-test 4/4 en el teléfono, tras 0186 (el contador de fences en `scratch+0x20` sobrevivía al reinicio en caliente).
 3. **Portar el stack de casuarina** (kernel 0982–0988 + userland Mesa/EAGL/inject) sobre nuestro árbol. Puntos a resolver:
    - encajarlo con nuestro `SweetFramebuffer`/`SweetSurface` (0046);
    - el mapa de RAM: casuarina usa XNU en `0x20000000–0x7fffffff` con el pool arriba; nosotros, XNU en `0xA0000000` y 0181 en `0x47800000`/`0x95000000`;

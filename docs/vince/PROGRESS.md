@@ -18,7 +18,7 @@
 | Reinicio a fastboot | ✅ | 0184: volumen + y − 3 s; 0185: panics y reinicios van a fastboot |
 | USB ECM / log por red | ⏳ | |
 | Wi‑Fi / BT | ⏳ | parches 0119–0179 de upstream |
-| GPU Adreno 506 | 🟡 fase A OK | Servicio `VinceGPU` registrado; self-test 3/4 (falla el primer envío); falta userland (plan en [GPU.md](GPU.md)) |
+| GPU Adreno 506 | 🟡 fase A ✅ | Servicio `VinceGPU` con self-test 4/4; falta userland, fase B (plan en [GPU.md](GPU.md)) |
 
 ## Pendientes conocidos
 1. **CI de HEAD roto en upstream**: decidido partir de `c3c7b7f` (rama `vince-port`). Los commits VinceGPU posteriores (`f2feeae`..`401873c`) quedan fuera por ahora.
@@ -147,3 +147,4 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
 - **Causa probable del fallo de la prueba 1**: el contador de fences (`scratch+0x20`, PA `0x47830020`) nunca se inicializaba y esa RAM conserva su contenido tras un reinicio en caliente. Con el 103 del arranque anterior, `vince_gpu_done(1)` daba el primer fence por cumplido antes de que la GPU ejecutara. **Parche 0186 `vince-gpu-fence-reset`**: lo pone a 0 en el paso 8 y añade a la prueba 1 una segunda lectura a los 50 ms para diagnóstico. Aplica en cadena 0182–0186.
 - **0184 probado**: volumen + y volumen − durante 3 s → `VINCE: rebooting into fastboot` → el teléfono entra en **fastboot**. El reinicio warm con el motivo en IMEM funciona: ya no hace falta el botón de encendido para salir de iOS.
 - Kernel 0182–0185 con iOS (`vince-boot-smp.img` `7dab601f…`, `sweetfb_hz=30`): llega a la pantalla de bloqueo sin problemas, con el pool de GPU reservado (RAM de XNU hasta `0xec000000`). **Subir el refresco a 30 Hz apenas cambia la fluidez**: el límite es el render por CPU de CoreAnimation, no la copia al panel, lo que confirma la GPU como prioridad.
+- **0186 probado: self-test de VinceGPU 4 de 4** (`vince-boot-gputest.img` `507f418d…`): `1 PASS (one word, fence 1)`, `2 PASS`, `3 PASS`, `4 PASS (100 submits, last fence 103)`. El fallo era el contador de fences sin inicializar. **Fase A de GPU completada.**
