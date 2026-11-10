@@ -47,6 +47,8 @@ if [[ ! -f $ko ]]; then
 		fi
 	done
 	make -j"$(nproc)" modules_prepare
+	# Objects from an earlier attempt with a different .config are only relinked, not recompiled: start clean.
+	make M=fs/hfsplus clean
 	# No Module.symvers for the shipped kernel: let modpost warn instead of failing on the kernel's exports.
 	make -j"$(nproc)" M=fs/hfsplus KBUILD_MODPOST_WARN=1 modules
 fi
