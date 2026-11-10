@@ -12,7 +12,7 @@
 | Emulación LSE/LDAPR | ⏸ no hace falta por ahora | dyld, launchd, daemons y SpringBoard corren en el A53 sin ella |
 | SMP 8 núcleos | ✅ 7 de 8 | `cpus=7` arranca y va más fluido; falta CPU1 |
 | SpringBoard / lock screen | ✅ | **Pantalla de bloqueo de iOS 16.7.16 en el Redmi 5 Plus** (2026-11-10) |
-| Touch TD4310 + teclas | ✅ touch / ⏳ teclas | El touch responde (LK deja L10/L6 encendidos) |
+| Touch TD4310 + teclas | ✅ | Touch y botones power/volumen funcionan |
 | USB ECM / log por red | ⏳ | |
 | Wi‑Fi / BT | ⏳ | parches 0119–0179 de upstream |
 | GPU Adreno 506 | ⏳ | 0181 de upstream; ios-casuarina como referencia |
@@ -106,3 +106,5 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
 - SMP: `SweetCPU.cpp` arranca los núcleos de los nodos `/cpus` del ADT por PSCI `CPU_ON`. `mkadt_vince.py` declara 0 y 2–7 (CPU1 la usaba el monitor USB del shim de upstream; nuestro shim la deja aparcada en `wfe`, así que se podría añadir después). Nueva imagen `vince-boot-smp.img` con `cpus=7`; la de 1 núcleo se conserva como respaldo.
 - **`vince-boot-smp.img` (`cpus=7`) arranca hasta la pantalla de bloqueo y va más fluido.** Con esto, iOS 16.7.16 corre en el Redmi 5 Plus con 7 núcleos, touch, raíz HFS+ con journal en la eMMC y consola silenciosa.
 - Hasta ahora nada ha fallado por instrucciones LSE/LDAPR: la emulación queda en espera hasta que algún proceso caiga con `EXC_BAD_INSTRUCTION`.
+- Botones: **power y volumen funcionan**. Al bloquear, la pantalla queda negra pero con la retroiluminación encendida: `SweetFramebuffer` solo funde a negro (pensado para el AMOLED de sweet) y en el LCD del vince la luz la da la WLED del PMI8950 (SID 3, `0xd800`).
+- **Parche 0182 `vince-wled-backlight`**: `vince_pmic_write()` (escritura SPMI genérica por el canal propio de las aplicaciones, con la misma comprobación EE 0 que la escritura del RTC y canales cacheados) y `vince_wled_set()`, que cambia solo el bit 7 de `MODULE_EN` (`0xd846`), como `qpnp_wled_module_en()` en Linux. `SweetFramebuffer` lo llama en cada `RequestPowerChange`. Aplica limpio sobre el árbol del CI (`patch --dry-run`).

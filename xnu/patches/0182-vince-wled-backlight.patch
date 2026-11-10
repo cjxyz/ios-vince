@@ -1,0 +1,156 @@
+diff --git a/bsd/dev/vince_pmic.c b/bsd/dev/vince_pmic.c
+index 07fccc0..77c3116 100644
+--- a/bsd/dev/vince_pmic.c
++++ b/bsd/dev/vince_pmic.c
+@@ -214,4 +214,105 @@ vince_pmic_store_offset(uint32_t v)
+ 	lck_mtx_unlock(pmic_lock);
+ 	return r;
+ }
++
++/*
++ * One-byte PMIC write through the apps' own channel (EXT_WRITEL), for peripherals the apps EE owns. The channel
++ * mappings are cached like the observer ones: the display path calls this on every power change.
++ */
++static struct {
++	unsigned ppid;
++	vm_offset_t chan;
++} pmic_wchan[4];
++static unsigned pmic_nwchan;
++
++static vm_offset_t
++pmic_write_channel(unsigned ppid)
++{
++	for (unsigned i = 0; i < pmic_nwchan; i++) {
++		if (pmic_wchan[i].ppid == ppid) {
++			return pmic_wchan[i].chan;
++		}
++	}
++	if (pmic_nwchan >= sizeof(pmic_wchan) / sizeof(pmic_wchan[0])) {
++		return 0;
++	}
++	for (unsigned apid = 0; apid < 256; apid++) {
++		uint32_t m = *(volatile uint32_t *)(pmic_core + 0x800 + 4 * apid);
++
++		if (m && ((m >> 8) & 0xFFF) == ppid) {
++			if ((*(volatile uint32_t *)(pmic_cnfg + 0x700 + 4 * apid) & 7) != 0) {
++				return 0;       /* owned by another execution environment */
++			}
++			vm_offset_t c = ml_io_map(ARB_CHNLS + 0x8000u * apid, 0x1000);
++
++			if (c) {
++				pmic_wchan[pmic_nwchan].ppid = ppid;
++				pmic_wchan[pmic_nwchan].chan = c;
++				pmic_nwchan++;
++			}
++			return c;
++		}
++	}
++	return 0;
++}
++
++/* 0 ok; <0 no such peripheral, not owned by the apps, or the write failed */
++int
++vince_pmic_write(unsigned ppid, unsigned reg, uint8_t val)
++{
++	vm_offset_t c;
++	int r = -100;
++
++	if (!pmic_lock) {
++		return -2;
++	}
++	lck_mtx_lock(pmic_lock);
++	c = pmic_write_channel(ppid);
++	if (!c) {
++		lck_mtx_unlock(pmic_lock);
++		return -1;
++	}
++	*(volatile uint32_t *)(c + WDATA0) = val;
++	*(volatile uint32_t *)(c + CMD) = OP_EXT_WRITEL << 27 | (reg & 0xFFu) << 4;
++	for (int k = 0; k < 10000; k++) {
++		uint32_t s = *(volatile uint32_t *)(c + STATUS);
++
++		if (s & 0xE) {
++			r = -(int)s;
++			break;
++		}
++		if (s & 1) {
++			r = 0;
++			break;
++		}
++		delay(1);
++	}
++	lck_mtx_unlock(pmic_lock);
++	return r;
++}
++
++/*
++ * LCD backlight: the PMI8950 WLED (SID 3, peripheral 0xd8, linux leds-qpnp-wled.c). LK leaves it configured and on;
++ * only the module enable bit (MODULE_EN 0x46 bit 7) is toggled, as qpnp_wled_module_en() does, so blanking the
++ * screen also turns the light off instead of leaving a lit black LCD.
++ */
++#define WLED_PPID       0x3D8u
++#define WLED_MODULE_EN  0x46u
++
++int
++vince_wled_set(int on)
++{
++	uint8_t en;
++	int r;
++
++	if (vince_pmic_init() || (r = vince_pmic_read(WLED_PPID, WLED_MODULE_EN, &en))) {
++		return -1;
++	}
++	en = on ? (en | 0x80) : (en & 0x7F);
++	r = vince_pmic_write(WLED_PPID, WLED_MODULE_EN, en);
++	if (r) {
++		printf("VINCE WLED: MODULE_EN write failed (%d)\n", r);
++	}
++	return r;
++}
+ #endif /* ARM64_BOARD_CONFIG_VINCE */
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index bf90e43..afe1d4d 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -19,7 +19,8 @@
+  *   12 RequestPowerChange [state]: 0 = display off (backboardd, power
+  *      button / auto-lock), else on. Off fades the panel out over a few
+  *      vsyncs (halving each pixel) and keeps it black until on again;
+- *      the panel itself stays powered (AMOLED black pixels are off).
++ *      the panel itself stays powered (AMOLED black pixels are off; on
++ *      VINCE's LCD the WLED backlight is switched off as well).
+  *   18 IsMainDisplay,
+  *   28 GetDotPitch, 72 Enable/DisableNotifications [func, refcon, type, 0]
+  * Everything else is accepted and logged once.
+@@ -37,6 +38,9 @@
+ #include "SweetSurface.h"
+ 
+ extern "C" int sweet_console_muted;     /* osfmk/console/serial_console.c */
++#if defined(ARM64_BOARD_CONFIG_VINCE)
++extern "C" int vince_wled_set(int on);  /* bsd/dev/vince_pmic.c: LCD backlight */
++#endif
+ 
+ #if defined(SWEET) || defined(ARM64_BOARD_CONFIG_VINCE)
+ #include <IOKit/IOService.h>
+@@ -674,13 +678,21 @@ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMetho
+ 	case kSweetFBRequestPowerChange:
+ 		if (args->scalarInputCount >= 1) {
+ 			bool off = args->scalarInput[0] == 0;
++			bool changed = false;
+ 			IOLockLock(fFB->fLock);
+ 			if (off != fFB->fPowerOff) {
+ 				fFB->fPowerOff = off;
+ 				fFB->fFadeStep = 0;
+ 				fFB->fDirty = true;     /* on: redraw the latest frame */
++				changed = true;
+ 			}
+ 			IOLockUnlock(fFB->fLock);
++#if defined(ARM64_BOARD_CONFIG_VINCE)
++			/* LCD, not AMOLED: black pixels still glow, so switch the backlight too */
++			if (changed) {
++				(void)vince_wled_set(!off);
++			}
++#endif
+ 			IOLog("SWEET FB: display %s\n", off ? "off" : "on");
+ 		}
+ 		break;
