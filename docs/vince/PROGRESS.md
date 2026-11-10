@@ -129,3 +129,4 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
   - Paso 10: tabla segura de `0x21000` en `0x47900000`, `mem_setup(0x95000000, 0x2000)`, `auth_and_reset` correcto, "GPU out of secure mode".
   - Paso 11: `CP_MEM_WRITE -> 0xc0ffee02`, RPTR=19, "Adreno 506 command processor is up (ring at PA 0x47820000)".
   - Después, el touch se inicializa con normalidad (RMI4 F12, 4 dedos).
+- **Fase A de GPU**: parche 0183 `vince-gpu-service` (servicio IOKit `VinceGPU` con la interfaz msm DRM, pool de 192 MiB, self-test) y ADT con la RAM de XNU reducida a `0x4bf00000` + panic log, para que el pool `0xec000000–0xf8000000` quede fuera. Detalle en [GPU.md](GPU.md). Aplica limpio (`git apply --check`); CI pendiente.

@@ -1,0 +1,1241 @@
+diff --git a/bsd/dev/vince_adreno.c b/bsd/dev/vince_adreno.c
+index 83cd8d9..5768fc9 100644
+--- a/bsd/dev/vince_adreno.c
++++ b/bsd/dev/vince_adreno.c
+@@ -1,5 +1,12 @@
+ /*
+  * Xiaomi Redmi 5 Plus (vince) Adreno 506 GPU bringup driver.
++ * From upstream 0181-vince-adreno-506-bringup (register sequences, SCM calls,
++ * memory layout and the firmware in vince_gpu_firmware.h), with the service
++ * interface for VinceGPU.cpp, the ring wrap and the boot thread taken from
++ * pixellia/ios-casuarina 0982 (APSL 2.0; GPU client lineage: HackiOS
++ * RedwoodGPU). Off unless the boot-arg adreno=N (or gpu=1) is given; runs on
++ * its own kernel thread a few seconds after vince_input_start(), and once
++ * step 11 passes it starts the VinceGPU service.
+  *
+  * Steps waking the Adreno 506:
+  *   1  reads   GCC clocks & GDSC status
+@@ -21,16 +28,20 @@
+ #include <sys/systm.h>
+ #include <kern/clock.h>
+ #include <kern/thread.h>
++#include <kern/sched_prim.h>
+ #include <arm/machine_routines.h>
+ #include <pexpert/pexpert.h>
+ #include <mach/vm_param.h>
+ 
+ #include "vince_gpu_firmware.h"
+ 
++extern kern_return_t thread_terminate(thread_t);
++
+ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
+ extern vm_offset_t ml_io_map_wcomb(vm_offset_t, vm_size_t);
+ extern vm_offset_t kvtophys(vm_offset_t va);
+ void vince_adreno_init(void);
++extern void VinceGPUStart(void);
+ 
+ /* ---- Register Bases ---- */
+ #define GCC_BASE_PA             0x01800000u
+@@ -187,6 +198,9 @@ void vince_adreno_init(void);
+ #define CP_NOP                  16
+ #define CP_MEM_WRITE            61
+ #define CP_ME_INIT              72
++#define CP_WAIT_MEM_WRITES      18
++#define CP_WAIT_FOR_IDLE        38
++#define CP_INDIRECT_BUFFER_PFE  63
+ #define CP_SET_SECURE_MODE      102
+ 
+ #define A5XX_INT_MASK           0x1190037eu     /* a5xx_gpu.c A5XX_INT_MASK */
+@@ -583,7 +597,7 @@ static void
+ rb_emit(uint32_t v)
+ {
+ 	gmem_w32(GPU_RB_OFF + rb_wptr * 4u, v);
+-	rb_wptr++;
++	rb_wptr = (rb_wptr + 1) % 8192;
+ }
+ 
+ /* publish WPTR and wait for the CP to consume everything (a5xx_flush + adreno_idle) */
+@@ -835,6 +849,120 @@ step10_zap(void)
+ }
+ 
+ /* Step 11: a command after leaving secure mode, and the final status */
++
++/* ---- VinceGPU Service Interface ---- */
++
++static bool gpu_ready = false;
++static uint32_t gpu_fence = 0;
++
++bool
++vince_gpu_ready(void)
++{
++	return gpu_ready;
++}
++
++uint32_t
++vince_gpu_last(void)
++{
++	return gpu_fence;
++}
++
++bool
++vince_gpu_done(uint32_t fence)
++{
++	uint32_t cur = gmem_r32(GPU_SCRATCH_OFF + 0x20);
++	return (int32_t)(cur - fence) >= 0;
++}
++
++bool
++vince_gpu_parameter(uint32_t which, uint64_t *value)
++{
++	switch (which) {
++	case 0x01: /* MSM_PARAM_GPU_ID */
++		*value = 506;
++		return true;
++	case 0x02: /* MSM_PARAM_GMEM_SIZE */
++		*value = 136 * 1024;
++		return true;
++	case 0x03: /* MSM_PARAM_CHIP_ID */
++		*value = 0x05000600ull;
++		return true;
++	case 0x04: /* MSM_PARAM_MAX_FREQ */
++		*value = 650000000ull;
++		return true;
++	case 0x05: /* MSM_PARAM_TIMESTAMP */
++		*value = mach_absolute_time();
++		return true;
++	case 0x06: /* MSM_PARAM_GMEM_BASE */
++		*value = 0x100000;
++		return true;
++	case 0x07: /* MSM_PARAM_PRIORITIES */
++		*value = 1;
++		return true;
++	case 0x08: /* PP_PGTABLE */
++	case 0x09: /* FAULTS */
++	case 0x0a: /* SUSPENDS */
++		*value = 0;
++		return true;
++	case 0x0c: /* MSM_PARAM_VA_START */
++		*value = 0;
++		return true;
++	case 0x0d: /* MSM_PARAM_VA_SIZE */
++		*value = 0x100000000ull;
++		return true;
++	default:
++		return false;
++	}
++}
++
++uint32_t
++vince_gpu_submit(const uint64_t *addresses, const uint32_t *words, uint32_t count)
++{
++	uint32_t needed = count * 4 + 8;
++	uint32_t i;
++
++	if (!gpu_ready || count == 0) {
++		return 0;
++	}
++
++	for (i = 0; i < 20000; i++) {
++		uint32_t rptr = gr(A5_CP_RB_RPTR);
++		uint32_t room = (rptr + 8192 - rb_wptr - 1) % 8192;
++		if (room >= needed) {
++			break;
++		}
++		delay(100);
++	}
++	if (i == 20000) {
++		printf("adreno: ringbuffer full! RPTR=%u WPTR=%u\n", gr(A5_CP_RB_RPTR), rb_wptr);
++		return 0;
++	}
++
++	rb_emit(pkt7(CP_WAIT_FOR_IDLE, 0));
++
++	for (i = 0; i < count; i++) {
++		rb_emit(pkt7(CP_INDIRECT_BUFFER_PFE, 3));
++		rb_emit((uint32_t)addresses[i]);
++		rb_emit(0);
++		rb_emit(words[i]);
++	}
++
++	gpu_fence++;
++	if (gpu_fence == 0) {
++		gpu_fence = 1;
++	}
++	rb_emit(pkt7(CP_WAIT_MEM_WRITES, 0));
++	rb_emit(pkt7(CP_MEM_WRITE, 3));
++	rb_emit(GPU_MEM_PA + GPU_SCRATCH_OFF + 0x20);
++	rb_emit(0);
++	rb_emit(gpu_fence);
++
++	__asm__ volatile("dsb sy" ::: "memory");
++	gw(A5_CP_RB_WPTR, rb_wptr);
++
++	return gpu_fence;
++}
++
+ static bool
+ step11_post_zap(void)
+ {
+@@ -853,6 +981,8 @@ step11_post_zap(void)
+ 	    got, gr(A5_RBBM_STATUS), gr(A5_RBBM_INT_0_STATUS), gr(A5_CP_RB_RPTR));
+ 	if (got == 0xc0ffee02u) {
+ 		printf("adreno: step 11: Adreno 506 command processor is up (ring at PA %#x)\n", GPU_MEM_PA + GPU_RB_OFF);
++		gpu_ready = true;
++		VinceGPUStart();
+ 	}
+ 	return got == 0xc0ffee02u;
+ }
+@@ -872,8 +1002,10 @@ static step_fn steps[11] = {
+ 	step11_post_zap,
+ };
+ 
+-void
+-vince_adreno_init(void)
++static int adreno_chan;
++
++static void
++adreno_run(void)
+ {
+ 	uint32_t arg = 0;
+ 	uint32_t i;
+@@ -916,4 +1048,40 @@ vince_adreno_init(void)
+ 	printf("==================================================\n");
+ }
+ 
++static void
++adreno_main(void *param, wait_result_t wr)
++{
++	uint64_t deadline;
++
++	clock_interval_to_deadline(3000, NSEC_PER_MSEC, &deadline);
++	(void)assert_wait_deadline(&adreno_chan, THREAD_UNINT, deadline);
++	thread_block(THREAD_CONTINUE_NULL);
++	adreno_run();
++	(void)thread_terminate(current_thread());
++	thread_block(THREAD_CONTINUE_NULL);
++}
++
++/*
++ * Started from vince_input_start(). Costs nothing unless adreno=N (or gpu=1)
++ * is in the boot-args. The sequence runs on its own thread, a few seconds
++ * after boot, so IOKit is up when VinceGPUStart() registers the service and a
++ * hang here cannot hold the touch screen or the keys.
++ */
++void
++vince_adreno_init(void)
++{
++	uint32_t arg = 0;
++	thread_t thread;
++
++	if (!PE_parse_boot_argn("adreno", &arg, sizeof(arg)) &&
++	    !(PE_parse_boot_argn("gpu", &arg, sizeof(arg)) && arg)) {
++		return;
++	}
++	if (kernel_thread_start(adreno_main, NULL, &thread) == KERN_SUCCESS) {
++		thread_deallocate(thread);
++	} else {
++		printf("VINCE ADRENO: thread not started\n");
++	}
++}
++
+ #endif /* ARM64_BOARD_CONFIG_VINCE */
+diff --git a/iokit/Kernel/arm/VinceGPU.cpp b/iokit/Kernel/arm/VinceGPU.cpp
+new file mode 100644
+index 0000000..e8eee4f
+--- /dev/null
++++ b/iokit/Kernel/arm/VinceGPU.cpp
+@@ -0,0 +1,982 @@
++/*
++ * VinceGPU: Adreno 506 GPU IOKit service for Vince (Xiaomi Redmi 5 Plus).
++ *
++ * Exposes Linux msm DRM requests (what freedreno's libdrm backend sends) to
++ * userland through an IOUserClient: GET_PARAM, GEM_NEW/INFO/CPU_PREP/CLOSE,
++ * GEM_SUBMIT, WAIT_FENCE, SUBMITQUEUE_*. Submits go to the ring of
++ * bsd/dev/vince_adreno.c; the service registers once its step 11 passes.
++ *
++ * From pixellia/ios-casuarina patches 0982, 0984, 0986-0988 and 0991 (APSL 2.0,
++ * like XNU; their GPU client derives from HackiOS RedwoodGPU, OOSEX GANG, and
++ * upstream ios-vince's VinceGPU). Changes for this tree: the pool sits above
++ * the RAM the ADT gives XNU instead of below a carve-out, cache maintenance
++ * uses FlushPoC_DcacheRegion, and the in-place surface mode (vinceplace,
++ * casuarina 0989/0990) is left out for now.
++ */
++#if defined(ARM64_BOARD_CONFIG_VINCE)
++
++
++#include <IOKit/IOLib.h>
++#include <IOKit/IOLocks.h>
++#include <IOKit/IOKitKeys.h>
++#include <IOKit/IOPlatformExpert.h>
++#include <IOKit/IOService.h>
++#include <IOKit/IOUserClient.h>
++#include <IOKit/IOBufferMemoryDescriptor.h>
++#include <kern/clock.h>
++#include <mach/mach_time.h>
++#include <mach/vm_param.h>
++#include <sys/systm.h>
++#include <pexpert/pexpert.h>
++
++extern "C" {
++uint64_t kvtophys(vm_offset_t va);
++void FlushPoC_DcacheRegion(vm_offset_t va, size_t length);    /* osfmk/arm/caches_internal.h: dc civac */
++bool vince_gpu_ready(void);
++bool vince_gpu_parameter(uint32_t which, uint64_t *value);
++uint32_t vince_gpu_submit(const uint64_t *addresses, const uint32_t *words, uint32_t count);
++bool vince_gpu_done(uint32_t fence);
++uint32_t vince_gpu_last(void);
++void VinceGPUStart(void);
++void VinceGPUStop(void);
++}
++
++enum {
++	kDrmGemClose            = 0x09,
++	kMsmGetParam            = 0x40,
++	kMsmSetParam            = 0x41,
++	kMsmGemNew              = 0x42,
++	kMsmGemInfo             = 0x43,
++	kMsmGemCpuPrep          = 0x44,
++	kMsmGemCpuFini          = 0x45,
++	kMsmGemSubmit           = 0x46,
++	kMsmWaitFence           = 0x47,
++	kMsmGemMadvise          = 0x48,
++	kMsmSubmitQueueNew      = 0x4a,
++	kMsmSubmitQueueClose    = 0x4b,
++	kMsmSubmitQueueQuery    = 0x4c,
++};
++
++struct msm_timespec {
++	int64_t seconds, nanoseconds;
++};
++struct msm_param {
++	uint32_t pipe, param;
++	uint64_t value;
++	uint32_t len, pad;
++};
++struct msm_gem_new {
++	uint64_t size;
++	uint32_t flags, handle;
++};
++struct msm_gem_info {
++	uint32_t handle, info;
++	uint64_t value;
++	uint32_t len, pad;
++};
++struct msm_gem_cpu_prep {
++	uint32_t handle, op;
++	struct msm_timespec timeout;
++};
++struct msm_gem_submit_cmd {
++	uint32_t type, submit_idx, submit_offset, size, pad, nr_relocs;
++	uint64_t relocs;
++};
++struct msm_gem_submit_bo {
++	uint32_t flags, handle;
++	uint64_t presumed;
++};
++struct msm_gem_submit {
++	uint32_t flags, fence, nr_bos, nr_cmds;
++	uint64_t bos, cmds;
++	int32_t fence_fd;
++	uint32_t queueid;
++	uint64_t in_syncobjs, out_syncobjs;
++	uint32_t nr_in_syncobjs, nr_out_syncobjs, syncobj_stride, pad;
++};
++struct msm_wait_fence {
++	uint32_t fence, flags;
++	struct msm_timespec timeout;
++	uint32_t queueid;
++};
++struct msm_gem_madvise {
++	uint32_t handle, madv, retained;
++};
++struct msm_submitqueue {
++	uint32_t flags, prio, id;
++};
++struct msm_submitqueue_query {
++	uint64_t data;
++	uint32_t id, param, len, pad;
++};
++struct drm_gem_close {
++	uint32_t handle, pad;
++};
++
++#define GPU_BUFFERS 1024
++#define GPU_BUFFER_MAX (256ull << 20)
++
++struct gpu_buffer {
++	IOMemoryDescriptor *memory;
++	uint8_t *kernel;
++	uint64_t address;
++	uint64_t size;
++	uint32_t flags;
++	bool pooled;
++	uint32_t seq;           /* which GEM_NEW made it (for the log when the pool is full) */
++	IOMemoryMap *kmap;      /* vincecache=1: a cacheable kernel mapping, for cache maintenance */
++};
++
++static IOLock *gGPULock = NULL;
++static uint32_t gSeq = 0;               /* GEM_NEWs so far (under gGPULock) */
++static bool gFallbackDead = false;      /* RAM outside the pool has had no 1 MiB piece: it is not asked again */
++
++
++/*
++ * vincecache=1: the buffers of the pool are mapped to the window server as ordinary cached memory instead of
++ * write-combined (reading write-combined memory is ~70 MB/s). The GPU does not snoop the CPU caches, so the kernel
++ * cleans+invalidates the buffer: before a submit (what the CPU wrote must reach RAM, and no dirty line may later be
++ * written over what the GPU wrote) and after the fence in cpu_prep (the CPU must not read stale lines).
++ */
++static bool
++cacheMode(void)
++{
++	static int mode = -1;
++	if (mode < 0) {
++		uint32_t v = 0;
++		mode = (PE_parse_boot_argn("vincecache", &v, sizeof(v)) && v) ? 1 : 0;
++	}
++	return mode == 1;
++}
++
++static void
++cacheSync(struct gpu_buffer *b)
++{
++	if (!cacheMode() || !b->pooled || b->memory == NULL) {
++		return;
++	}
++	if (b->kmap == NULL) {
++		b->kmap = b->memory->createMappingInTask(kernel_task, 0, kIOMapAnywhere | kIOMapCopybackCache);
++		if (b->kmap == NULL) {
++			IOLog("VinceGPU: no cacheable kernel mapping of a buffer of %llu bytes\n", b->size);
++			return;
++		}
++	}
++	FlushPoC_DcacheRegion((vm_offset_t)b->kmap->getVirtualAddress(), (size_t)b->size);
++}
++
++/*
++ * The pool GEM_NEW buffers come from. The GPU runs on from the first physical address of a buffer (no IOMMU), so a
++ * buffer has to be one piece, and RAM that has been in use for a while has no 12 MiB pieces left (the window server
++ * wants one for every frame). So 192 MiB of RAM are never given to XNU: tools/mkadt_vince.py ends XNU's RAM (and its
++ * panic log) at 0xec000000 and this range runs to 0xf8000000, where upstream's 0x58000000 bytes from 0xa0000000
++ * ended; the two must agree. Handed out here in 4 KiB units, first fit.
++ */
++#define GPU_POOL_PA     0xec000000ull
++#define GPU_POOL_SIZE   0x0c000000ull
++#define GPU_POOL_UNIT   4096ull
++#define GPU_POOL_UNITS  (GPU_POOL_SIZE / GPU_POOL_UNIT)
++
++static IOLock *gPoolLock = NULL;        /* the bits below */
++static uint32_t *gPoolBits = NULL;      /* one bit a unit: set = given out (under gGPULock) */
++
++static bool
++poolUsed(uint64_t unit)
++{
++	return (gPoolBits[unit / 32] >> (unit % 32)) & 1;
++}
++
++static void
++poolMark(uint64_t unit, bool used)
++{
++	if (used) {
++		gPoolBits[unit / 32] |= 1u << (unit % 32);
++	} else {
++		gPoolBits[unit / 32] &= ~(1u << (unit % 32));
++	}
++}
++
++/* the physical address of size bytes (a multiple of 4 KiB) of the pool, or 0; gPoolLock held */
++static uint64_t
++poolAllocLocked(uint64_t size)
++{
++	uint64_t need = size / GPU_POOL_UNIT, run = 0;
++
++	if (gPoolBits == NULL) {
++		gPoolBits = (uint32_t *)IOMallocZero(GPU_POOL_UNITS / 8);
++		if (gPoolBits == NULL) {
++			return 0;
++		}
++	}
++	for (uint64_t i = 0; need != 0 && i < GPU_POOL_UNITS; i++) {
++		if (poolUsed(i)) {
++			run = 0;
++		} else if (++run == need) {
++			uint64_t first = i + 1 - need;
++
++			for (uint64_t j = first; j <= i; j++) {
++				poolMark(j, true);
++			}
++			return GPU_POOL_PA + first * GPU_POOL_UNIT;
++		}
++	}
++	return 0;
++}
++
++static void
++poolFreeLocked(uint64_t address, uint64_t size)
++{
++	uint64_t first = (address - GPU_POOL_PA) / GPU_POOL_UNIT;
++
++	if (gPoolBits == NULL || address < GPU_POOL_PA || address + size > GPU_POOL_PA + GPU_POOL_SIZE) {
++		return;
++	}
++	for (uint64_t j = first; j < first + size / GPU_POOL_UNIT; j++) {
++		poolMark(j, false);
++	}
++}
++
++/* the lock may be needed before VinceGPUStart() made it */
++static void
++poolLockInit(void)
++{
++	if (gPoolLock == NULL) {
++		IOLock *lock = IOLockAlloc();
++
++		if (lock != NULL && !OSCompareAndSwapPtr(NULL, lock, (void * volatile *)&gPoolLock)) {
++			IOLockFree(lock);
++		}
++	}
++}
++
++/* what is left of the pool, for the log when a buffer does not fit; gPoolLock held */
++static void
++poolReport(const char *why, uint64_t wanted)
++{
++	uint64_t used = 0, run = 0, best = 0;
++
++	if (gPoolBits == NULL) {
++		return;
++	}
++	for (uint64_t i = 0; i < GPU_POOL_UNITS; i++) {
++		if (poolUsed(i)) {
++			used++;
++			run = 0;
++		} else if (++run > best) {
++			best = run;
++		}
++	}
++	IOLog("VinceGPU: pool %s %llu KiB: %llu of %llu MiB used, largest free piece %llu KiB\n", why,
++	    (unsigned long long)(wanted >> 10), (unsigned long long)(used * GPU_POOL_UNIT >> 20),
++	    (unsigned long long)(GPU_POOL_SIZE >> 20), (unsigned long long)(best * GPU_POOL_UNIT >> 10));
++}
++
++static uint64_t
++poolAlloc(uint64_t size)
++{
++	uint64_t pa;
++
++	poolLockInit();
++	IOLockLock(gPoolLock);
++	pa = poolAllocLocked(size);
++	IOLockUnlock(gPoolLock);
++	return pa;
++}
++
++static void
++poolFree(uint64_t address, uint64_t size)
++{
++	IOLockLock(gPoolLock);
++	poolFreeLocked(address, size);
++	IOLockUnlock(gPoolLock);
++}
++
++static int64_t
++millisecondsUntil(const struct msm_timespec *when)
++{
++	uint64_t now_ns;
++	int64_t target_ns, left_ns;
++
++	absolutetime_to_nanoseconds(mach_continuous_time(), &now_ns);
++	target_ns = when->seconds * NSEC_PER_SEC + when->nanoseconds;
++	left_ns = target_ns - (int64_t)now_ns;
++	if (left_ns <= 0) {
++		return 0;
++	}
++	return left_ns / NSEC_PER_MSEC;
++}
++
++static void VinceGPUSelfTest(void);
++
++static bool
++gpuWait(uint32_t fence, int64_t patienceMs)
++{
++	uint64_t start = mach_absolute_time();
++	while (!vince_gpu_done(fence)) {
++		uint64_t elapsedNs, elapsedMs;
++		absolutetime_to_nanoseconds(mach_absolute_time() - start, &elapsedNs);
++		elapsedMs = elapsedNs / NSEC_PER_MSEC;
++		if ((int64_t)elapsedMs >= patienceMs) {
++			return vince_gpu_done(fence);
++		}
++		IOSleep(1);
++	}
++	return true;
++}
++
++/* ---------------- VinceGPU Service ---------------- */
++
++class VinceGPU : public IOService
++{
++	OSDeclareDefaultStructors(VinceGPU);
++
++public:
++	virtual bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
++};
++
++OSDefineMetaClassAndStructors(VinceGPU, IOService);
++
++bool
++VinceGPU::start(IOService *provider)
++{
++	if (!IOService::start(provider)) {
++		return false;
++	}
++	setProperty(kIOUserClientClassKey, "VinceGPUUserClient");
++	setName("VinceGPU");
++	registerService();
++	IOLog("VinceGPU: service started and registered\n");
++	return true;
++}
++
++void
++VinceGPUStart(void)
++{
++	IOService *provider = IOService::getPlatform();
++	VinceGPU *gpu;
++
++	if (gGPULock == NULL) {
++		gGPULock = IOLockAlloc();
++	}
++	if (gPoolLock == NULL) {
++		gPoolLock = IOLockAlloc();
++	}
++	gpu = OSTypeAlloc(VinceGPU);
++	if (gpu == NULL || provider == NULL || !gpu->init() || !gpu->attach(provider)) {
++		OSSafeReleaseNULL(gpu);
++		IOLog("VinceGPU: cannot create service\n");
++		return;
++	}
++	if (!gpu->start(provider)) {
++		gpu->detach(provider);
++		IOLog("VinceGPU: service failed to start\n");
++	}
++	gpu->release();
++	{
++		uint32_t test = 0;
++		if (PE_parse_boot_argn("adreno_test", &test, sizeof(test)) && test) {
++			VinceGPUSelfTest();
++		}
++	}
++}
++
++void
++VinceGPUStop(void)
++{
++}
++
++/* ---------------- self-test (boot-arg adreno_test=1) ---------------- */
++
++/*
++ * The path a user program takes, without the Mach calls: buffers the way GEM_NEW makes them (XNU's own RAM,
++ * write-combined), command buffers submitted through vince_gpu_submit(), the fence waited for, the results
++ * read back through the kernel mapping. Writes with CP_MEM_WRITE to the GPU address of a buffer, so it proves the
++ * GPU reads command buffers and writes memory outside its own 2 MiB block.
++ */
++static uint32_t
++selfParity(uint32_t v)
++{
++	v ^= v >> 16;
++	v ^= v >> 8;
++	v ^= v >> 4;
++	v ^= v >> 2;
++	v ^= v >> 1;
++	return (~v) & 1u;
++}
++
++static uint32_t
++selfPkt7(uint32_t op, uint32_t cnt)
++{
++	return 0x70000000u | cnt | (selfParity(cnt) << 15) | ((op & 0x7fu) << 16) | (selfParity(op) << 23);
++}
++
++static bool
++selfBuffer(struct gpu_buffer *b, uint64_t size)
++{
++	IOBufferMemoryDescriptor *memory = IOBufferMemoryDescriptor::inTaskWithOptions(
++		kernel_task, kIODirectionInOut | kIOMemoryKernelUserShared | kIOMapWriteCombineCache,
++		(vm_size_t)size, PAGE_SIZE);
++
++	bzero(b, sizeof(*b));
++	if (memory == NULL) {
++		return false;
++	}
++	b->memory = memory;
++	b->kernel = (uint8_t *)memory->getBytesNoCopy();
++	b->address = memory->getPhysicalAddress();
++	if (b->address == 0) {
++		b->address = kvtophys((vm_offset_t)b->kernel);
++	}
++	b->size = size;
++	bzero(b->kernel, (size_t)size);
++	return true;
++}
++
++static void
++VinceGPUSelfTest(void)
++{
++	struct gpu_buffer ib, data;
++	volatile uint32_t *d, *c;
++	uint64_t value = 0;
++	uint32_t fence, i, ok = 0, total = 0;
++	uint64_t addresses[2];
++	uint32_t words[2];
++
++	IOLog("VinceGPU test: start\n");
++	if (!vince_gpu_parameter(1, &value)) {
++		IOLog("VinceGPU test: GPU_ID unavailable\n");
++		return;
++	}
++	IOLog("VinceGPU test: GPU_ID %llu\n", value);
++	if (!selfBuffer(&ib, 4096)) {
++		IOLog("VinceGPU test: no memory for the command buffer\n");
++		return;
++	}
++	if (!selfBuffer(&data, 4096)) {
++		IOLog("VinceGPU test: no memory for the data buffer\n");
++		ib.memory->release();
++		return;
++	}
++	IOLog("VinceGPU test: command buffer at PA %#llx, data buffer at PA %#llx\n", ib.address, data.address);
++	d = (volatile uint32_t *)data.kernel;
++	c = (volatile uint32_t *)ib.kernel;
++
++	/* 1: one word */
++	for (i = 0; i < 1024; i++) {
++		d[i] = 0x11111111u;
++	}
++	c[0] = selfPkt7(61 /* CP_MEM_WRITE */, 3);
++	c[1] = (uint32_t)data.address;
++	c[2] = (uint32_t)(data.address >> 32);
++	c[3] = 0xcafe0001u;
++	addresses[0] = ib.address;
++	words[0] = 4;
++	__asm__ volatile ("dsb sy" ::: "memory");
++	total++;
++	fence = vince_gpu_submit(addresses, words, 1);
++	if (fence != 0 && gpuWait(fence, 1000) && d[0] == 0xcafe0001u && d[1] == 0x11111111u) {
++		ok++;
++		IOLog("VinceGPU test: 1 PASS (one word, fence %u)\n", fence);
++	} else {
++		IOLog("VinceGPU test: 1 FAIL (fence %u, d[0] %#x, d[1] %#x)\n", fence, d[0], d[1]);
++	}
++
++	/* 2: sixteen words in one packet */
++	c[0] = selfPkt7(61, 2 + 16);
++	c[1] = (uint32_t)(data.address + 0x100);
++	c[2] = (uint32_t)((data.address + 0x100) >> 32);
++	for (i = 0; i < 16; i++) {
++		c[3 + i] = 0xbeef0000u + i;
++	}
++	words[0] = 3 + 16;
++	__asm__ volatile ("dsb sy" ::: "memory");
++	total++;
++	fence = vince_gpu_submit(addresses, words, 1);
++	if (fence != 0 && gpuWait(fence, 1000)) {
++		for (i = 0; i < 16; i++) {
++			if (d[0x40 + i] != 0xbeef0000u + i) {
++				break;
++			}
++		}
++		if (i == 16 && d[0x3f] == 0x11111111u && d[0x50] == 0x11111111u) {
++			ok++;
++			IOLog("VinceGPU test: 2 PASS (sixteen words, fence %u)\n", fence);
++		} else {
++			IOLog("VinceGPU test: 2 FAIL (word %u is %#x)\n", i, i < 16 ? d[0x40 + i] : 0);
++		}
++	} else {
++		IOLog("VinceGPU test: 2 FAIL (fence %u)\n", fence);
++	}
++
++	/* 3: two command buffers in one submit */
++	c[0x100] = selfPkt7(61, 3);
++	c[0x101] = (uint32_t)(data.address + 0x200);
++	c[0x102] = (uint32_t)((data.address + 0x200) >> 32);
++	c[0x103] = 0x5a5a0001u;
++	c[0x110] = selfPkt7(61, 3);
++	c[0x111] = (uint32_t)(data.address + 0x204);
++	c[0x112] = (uint32_t)((data.address + 0x204) >> 32);
++	c[0x113] = 0x5a5a0002u;
++	addresses[0] = ib.address + 0x400;
++	addresses[1] = ib.address + 0x440;
++	words[0] = 4;
++	words[1] = 4;
++	__asm__ volatile ("dsb sy" ::: "memory");
++	total++;
++	fence = vince_gpu_submit(addresses, words, 2);
++	if (fence != 0 && gpuWait(fence, 1000) && d[0x80] == 0x5a5a0001u && d[0x81] == 0x5a5a0002u) {
++		ok++;
++		IOLog("VinceGPU test: 3 PASS (two command buffers, fence %u)\n", fence);
++	} else {
++		IOLog("VinceGPU test: 3 FAIL (fence %u, %#x %#x)\n", fence, d[0x80], d[0x81]);
++	}
++
++	/* 4: a hundred submits in a row (the ring and the fence counter) */
++	addresses[0] = ib.address;
++	c[0] = selfPkt7(61, 3);
++	c[1] = (uint32_t)(data.address + 0x300);
++	c[2] = (uint32_t)((data.address + 0x300) >> 32);
++	c[3] = 0x77770000u;
++	words[0] = 4;
++	total++;
++	fence = 0;
++	for (i = 1; i <= 100; i++) {
++		c[3] = 0x77770000u + i;
++		__asm__ volatile ("dsb sy" ::: "memory");
++		fence = vince_gpu_submit(addresses, words, 1);
++		if (fence == 0 || !gpuWait(fence, 1000)) {
++			break;
++		}
++	}
++	if (i == 101 && d[0xc0] == 0x77770000u + 100) {
++		ok++;
++		IOLog("VinceGPU test: 4 PASS (100 submits, last fence %u)\n", fence);
++	} else {
++		IOLog("VinceGPU test: 4 FAIL (stopped at %u, fence %u, value %#x)\n", i, fence, d[0xc0]);
++	}
++
++	IOLog("VinceGPU test: %u of %u passed\n", ok, total);
++	data.memory->release();
++	ib.memory->release();
++}
++
++/* ---------------- VinceGPUUserClient ---------------- */
++
++class VinceGPUUserClient : public IOUserClient
++{
++	OSDeclareDefaultStructors(VinceGPUUserClient);
++
++public:
++	virtual bool initWithTask(task_t owningTask, void *securityID, UInt32 type) APPLE_KEXT_OVERRIDE;
++	virtual bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
++	virtual IOReturn clientClose(void) APPLE_KEXT_OVERRIDE;
++	virtual IOReturn clientMemoryForType(UInt32 type, IOOptionBits *options, IOMemoryDescriptor **memory) APPLE_KEXT_OVERRIDE;
++	virtual IOReturn externalMethod(uint32_t selector, IOExternalMethodArguments *args,
++	    IOExternalMethodDispatch *dispatch, OSObject *target, void *reference) APPLE_KEXT_OVERRIDE;
++
++private:
++	struct gpu_buffer *buffer(uint32_t handle);
++	IOReturn gemNew(struct msm_gem_new *request);
++	IOReturn gemInfo(struct msm_gem_info *request);
++	IOReturn submit(struct msm_gem_submit *request);
++	void freeBuffer(struct gpu_buffer *b);
++
++	task_t fTask;
++	struct gpu_buffer *fBuffers;
++	uint32_t fNextBuffer;
++	uint32_t fNextQueue;
++};
++
++OSDefineMetaClassAndStructors(VinceGPUUserClient, IOUserClient);
++
++bool
++VinceGPUUserClient::initWithTask(task_t owningTask, void *securityID, UInt32 type)
++{
++	if (!IOUserClient::initWithTask(owningTask, securityID, type)) {
++		return false;
++	}
++	fTask = owningTask;
++	fNextBuffer = 0;
++	fNextQueue = 0;
++	fBuffers = (struct gpu_buffer *)IOMallocZero(sizeof(struct gpu_buffer) * GPU_BUFFERS);
++	return fBuffers != NULL;
++}
++
++bool
++VinceGPUUserClient::start(IOService *provider)
++{
++	return IOUserClient::start(provider);
++}
++
++void
++VinceGPUUserClient::freeBuffer(struct gpu_buffer *b)
++{
++	if (b->kmap != NULL) {
++		b->kmap->release();
++		b->kmap = NULL;
++	}
++	if (b->memory != NULL) {
++		b->memory->release();
++		b->memory = NULL;
++		if (b->pooled) {
++			poolFree(b->address, b->size);
++		}
++	}
++	bzero(b, sizeof(*b));
++}
++
++IOReturn
++VinceGPUUserClient::clientClose(void)
++{
++	if (fBuffers != NULL) {
++		IOLockLock(gGPULock);
++		for (uint32_t i = 0; i < GPU_BUFFERS; i++) {
++			freeBuffer(&fBuffers[i]);
++		}
++		IOFree(fBuffers, sizeof(struct gpu_buffer) * GPU_BUFFERS);
++		fBuffers = NULL;
++		IOLockUnlock(gGPULock);
++	}
++	terminate();
++	return kIOReturnSuccess;
++}
++
++struct gpu_buffer *
++VinceGPUUserClient::buffer(uint32_t handle)
++{
++	if (handle == 0 || handle > GPU_BUFFERS || fBuffers == NULL) {
++		return NULL;
++	}
++	return fBuffers[handle - 1].memory != NULL ? &fBuffers[handle - 1] : NULL;
++}
++
++IOReturn
++VinceGPUUserClient::gemNew(struct msm_gem_new *request)
++{
++	uint64_t size = round_page_64(request->size);
++	struct gpu_buffer *b = NULL;
++	IOMemoryDescriptor *memory = NULL;
++	uint64_t pooled = 0;
++
++	if (size == 0 || size > GPU_BUFFER_MAX || fBuffers == NULL) {
++		return kIOReturnBadArgument;
++	}
++
++	IOLockLock(gGPULock);
++	for (uint32_t n = 0; n < GPU_BUFFERS; n++) {
++		uint32_t h = (fNextBuffer + n) % GPU_BUFFERS;
++		if (fBuffers[h].memory == NULL) {
++			b = &fBuffers[h];
++			fNextBuffer = h + 1;
++			request->handle = h + 1;
++			break;
++		}
++	}
++	IOLockUnlock(gGPULock);
++
++	if (b == NULL) {
++		return kIOReturnNoMemory;
++	}
++
++	/* from the pool: one piece of RAM nothing else owns */
++	IOLockLock(gGPULock);
++	pooled = poolAlloc(size);
++	if (pooled == 0) {
++		static uint32_t told;
++		if (told++ < 6) {
++			/* (for the log: what the buffers of this client hold) */
++			uint64_t held = 0, count = 0, bytes[5] = { 0, 0, 0, 0, 0 }, old = 0;
++			static const uint64_t edge[4] = { 64u << 10, 256u << 10, 1u << 20, 4u << 20 };
++			for (uint32_t i = 0; i < GPU_BUFFERS; i++) {
++				if (fBuffers[i].memory != NULL && fBuffers[i].pooled) {
++					uint32_t k = 0;
++					held += fBuffers[i].size;
++					count++;
++					while (k < 4 && fBuffers[i].size > edge[k]) {
++						k++;
++					}
++					bytes[k] += fBuffers[i].size;
++					if (gSeq - fBuffers[i].seq > 2000) {
++						old += fBuffers[i].size;
++					}
++				}
++			}
++			IOLog("VinceGPU: ... by size: up to 64K %llu KiB, 256K %llu, 1M %llu, 4M %llu, more %llu; made more than 2000 "
++			    "GEM_NEWs ago: %llu KiB (of %u)\n", (unsigned long long)(bytes[0] >> 10), (unsigned long long)(bytes[1] >> 10),
++			    (unsigned long long)(bytes[2] >> 10), (unsigned long long)(bytes[3] >> 10), (unsigned long long)(bytes[4] >> 10),
++			    (unsigned long long)(old >> 10), gSeq);
++			IOLockLock(gPoolLock);
++			poolReport("has no", size);
++			IOLockUnlock(gPoolLock);
++			IOLog("VinceGPU: ... this client holds %llu pool buffers, %llu KiB\n", (unsigned long long)count,
++			    (unsigned long long)(held >> 10));
++		}
++	}
++	IOLockUnlock(gGPULock);
++	if (pooled != 0) {
++		memory = IOMemoryDescriptor::withAddressRange(pooled, size, kIODirectionInOut | kIOMemoryTypePhysical64, NULL);
++		if (memory == NULL) {
++			IOLockLock(gGPULock);
++			poolFree(pooled, size);
++			IOLockUnlock(gGPULock);
++			pooled = 0;
++		}
++	}
++
++	/* the pool has no piece that big: memory of the VM, if it is one piece (it hardly ever is) */
++	if (memory == NULL && gFallbackDead && size >= (1u << 20)) {
++		return kIOReturnNoMemory;               /* (RAM of the VM has no pieces: each try takes a second of scanning) */
++	}
++	if (memory == NULL) {
++		IOBufferMemoryDescriptor *buffer = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
++		    kernel_task,
++		    kIODirectionInOut | kIOMemoryKernelUserShared | kIOMapWriteCombineCache | kIOMemoryPhysicallyContiguous,
++		    (vm_size_t)size,
++		    0xfffff000ULL);
++
++		if (buffer != NULL) {
++			IOByteCount segment = 0;
++			addr64_t first = buffer->getPhysicalSegment(0, &segment, kIOMemoryMapperNone);
++
++			if (first == 0 || segment < size || first + size > 0x100000000ULL) {
++				IOLog("VinceGPU: GEM_NEW %llu bytes: memory is not one piece (%llu), refused\n", size, (uint64_t)segment);
++				buffer->release();
++				buffer = NULL;
++			}
++		} else {
++			IOLog("VinceGPU: GEM_NEW %llu bytes: the pool and RAM have no piece that big\n", size);
++			if (size >= (1u << 20)) {
++				gFallbackDead = true;
++			}
++		}
++		memory = buffer;
++	}
++	if (memory == NULL) {
++		return kIOReturnNoMemory;
++	}
++
++	IOLockLock(gGPULock);
++	bzero(b, sizeof(*b));
++	b->memory = memory;
++	b->pooled = pooled != 0;
++	if (b->pooled) {
++		b->kernel = NULL;
++		b->address = pooled;
++	} else {
++		b->kernel = (uint8_t *)((IOBufferMemoryDescriptor *)memory)->getBytesNoCopy();
++		b->address = memory->getPhysicalAddress();
++		if (b->address == 0) {
++			b->address = kvtophys((vm_offset_t)b->kernel);
++		}
++	}
++	b->size = size;
++	b->flags = request->flags;
++	b->seq = ++gSeq;
++	IOLockUnlock(gGPULock);
++
++	return kIOReturnSuccess;
++}
++
++IOReturn
++VinceGPUUserClient::gemInfo(struct msm_gem_info *request)
++{
++	struct gpu_buffer *b;
++	IOReturn ret = kIOReturnSuccess;
++
++	IOLockLock(gGPULock);
++	b = buffer(request->handle);
++	if (b == NULL) {
++		ret = kIOReturnNotFound;
++	} else if (request->info == 1 /* kInfoGetIova */) {
++		request->value = b->address;
++	} else if (request->info == 0 /* kInfoGetOffset */) {
++		request->value = 0;
++	} else {
++		ret = kIOReturnBadArgument;
++	}
++	IOLockUnlock(gGPULock);
++	return ret;
++}
++
++IOReturn
++VinceGPUUserClient::submit(struct msm_gem_submit *request)
++{
++	struct msm_gem_submit_bo *bos = NULL;
++	struct msm_gem_submit_cmd *cmds = NULL;
++	uint64_t addresses[16];
++	uint32_t words[16];
++	uint32_t count = 0;
++	IOReturn ret = kIOReturnSuccess;
++
++	if (request->nr_bos == 0 || request->nr_cmds == 0 || request->nr_cmds > 16) {
++		return kIOReturnBadArgument;
++	}
++
++	bos = (struct msm_gem_submit_bo *)IOMalloc(request->nr_bos * sizeof(*bos));
++	cmds = (struct msm_gem_submit_cmd *)IOMalloc(request->nr_cmds * sizeof(*cmds));
++	if (bos == NULL || cmds == NULL) {
++		ret = kIOReturnNoMemory;
++		goto out;
++	}
++
++	if (copyin((user_addr_t)request->bos, bos, request->nr_bos * sizeof(*bos)) != 0 ||
++	    copyin((user_addr_t)request->cmds, cmds, request->nr_cmds * sizeof(*cmds)) != 0) {
++		ret = kIOReturnVMError;
++		goto out;
++	}
++
++	IOLockLock(gGPULock);
++	for (uint32_t i = 0; i < request->nr_cmds; i++) {
++		struct gpu_buffer *b = cmds[i].submit_idx < request->nr_bos ? buffer(bos[cmds[i].submit_idx].handle) : NULL;
++		if (b == NULL || (cmds[i].size & 3) || (cmds[i].submit_offset & 3) ||
++		    (uint64_t)cmds[i].submit_offset + cmds[i].size > b->size) {
++			IOLockUnlock(gGPULock);
++			ret = kIOReturnBadArgument;
++			goto out;
++		}
++		addresses[count] = b->address + cmds[i].submit_offset;
++		words[count++] = cmds[i].size / 4;
++	}
++	for (uint32_t i = 0; i < request->nr_bos; i++) {
++		struct gpu_buffer *b = buffer(bos[i].handle);
++		if (b != NULL) {
++			cacheSync(b);
++		}
++	}
++
++	request->fence = vince_gpu_submit(addresses, words, count);
++	IOLockUnlock(gGPULock);
++
++	if (request->fence == 0) {
++		ret = kIOReturnTimeout;
++	}
++
++out:
++	if (bos != NULL) {
++		IOFree(bos, request->nr_bos * sizeof(*bos));
++	}
++	if (cmds != NULL) {
++		IOFree(cmds, request->nr_cmds * sizeof(*cmds));
++	}
++	return ret;
++}
++
++IOReturn
++VinceGPUUserClient::clientMemoryForType(UInt32 type, IOOptionBits *options, IOMemoryDescriptor **memory)
++{
++	struct gpu_buffer *b;
++	IOReturn ret = kIOReturnBadArgument;
++
++	IOLockLock(gGPULock);
++	b = buffer(type);
++	if (b != NULL && b->memory != NULL) {
++		b->memory->retain();
++		*memory = b->memory;
++		*options = b->pooled ? (cacheMode() ? kIOMapCopybackCache : kIOMapWriteCombineCache) : 0;
++		ret = kIOReturnSuccess;
++	}
++	IOLockUnlock(gGPULock);
++	return ret;
++}
++
++IOReturn
++VinceGPUUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments *args,
++    IOExternalMethodDispatch *dispatch, OSObject *target, void *reference)
++{
++	union {
++		struct msm_param param;
++		struct msm_gem_new gemNew;
++		struct msm_gem_info gemInfo;
++		struct msm_gem_cpu_prep cpuPrep;
++		struct msm_gem_submit submit;
++		struct msm_wait_fence waitFence;
++		struct msm_gem_madvise madvise;
++		struct msm_submitqueue queue;
++		struct msm_submitqueue_query query;
++		struct drm_gem_close close;
++	} r;
++	size_t size = args->structureInputSize;
++	struct gpu_buffer *b;
++	IOReturn ret = kIOReturnSuccess;
++	uint64_t zero = 0, patience;
++
++	if (args->structureInput == NULL || size > sizeof(r) || fBuffers == NULL) {
++		return kIOReturnBadArgument;
++	}
++	if (!vince_gpu_ready()) {
++		return kIOReturnNotReady;
++	}
++
++	bzero(&r, sizeof(r));
++	memcpy(&r, args->structureInput, size);
++
++	switch (selector) {
++	case kMsmGetParam:
++		ret = vince_gpu_parameter(r.param.param, &r.param.value) ? kIOReturnSuccess : kIOReturnBadArgument;
++		break;
++	case kMsmSetParam:
++	case kMsmGemCpuFini:
++	case kMsmSubmitQueueClose:
++		break;
++	case kMsmGemNew:
++		ret = gemNew(&r.gemNew);
++		break;
++	case kMsmGemInfo:
++		ret = gemInfo(&r.gemInfo);
++		break;
++	case kMsmGemCpuPrep:
++		patience = millisecondsUntil(&r.cpuPrep.timeout);
++		if (!gpuWait(vince_gpu_last(), patience)) {
++			ret = kIOReturnBusy;
++		} else if (cacheMode() && (r.cpuPrep.op & 1 /* MSM_PREP_READ */)) {
++			IOLockLock(gGPULock);
++			b = buffer(r.cpuPrep.handle);
++			if (b != NULL) {
++				cacheSync(b);
++			}
++			IOLockUnlock(gGPULock);
++		}
++		break;
++	case kMsmGemSubmit:
++		ret = submit(&r.submit);
++		break;
++	case kMsmWaitFence:
++		patience = millisecondsUntil(&r.waitFence.timeout);
++		if (!gpuWait(r.waitFence.fence, patience)) {
++			ret = kIOReturnTimeout;
++		}
++		break;
++	case kMsmGemMadvise:
++		r.madvise.retained = 1;
++		break;
++	case kMsmSubmitQueueNew:
++		r.queue.id = ++fNextQueue;
++		break;
++	case kMsmSubmitQueueQuery:
++		if (r.query.data != 0 && r.query.len >= sizeof(zero)) {
++			copyout(&zero, (user_addr_t)r.query.data, sizeof(zero));
++		}
++		break;
++	case kDrmGemClose:
++		IOLockLock(gGPULock);
++		b = buffer(r.close.handle);
++		if (b == NULL) {
++			ret = kIOReturnBadArgument;
++		} else {
++			freeBuffer(b);
++		}
++		IOLockUnlock(gGPULock);
++		break;
++	default:
++		ret = kIOReturnUnsupported;
++		break;
++	}
++
++	if (args->structureOutput != NULL && args->structureOutputSize >= size) {
++		memcpy(args->structureOutput, &r, size);
++		args->structureOutputSize = (uint32_t)size;
++	}
++	return ret;
++}
++
++#endif /* ARM64_BOARD_CONFIG_VINCE */
+diff --git a/iokit/conf/files.arm64 b/iokit/conf/files.arm64
+index c2b0f74..67f58cb 100644
+--- a/iokit/conf/files.arm64
++++ b/iokit/conf/files.arm64
+@@ -17,6 +17,7 @@ iokit/Kernel/arm/SweetSurface.cpp                                optional iokitc
+ iokit/Kernel/arm/SweetFramebuffer.cpp                            optional iokitcpp
+ iokit/Kernel/arm/SweetBattery.cpp                                optional iokitcpp
+ iokit/Kernel/arm/VinceWiFi.cpp                                   optional iokitcpp
++iokit/Kernel/arm/VinceGPU.cpp                                    optional iokitcpp
+ iokit/Kernel/arm/VinceBT.cpp                                     optional iokitcpp
+ iokit/Kernel/arm/hid/SweetHID.cpp                                optional iokitcpp
+ iokit/Kernel/arm/hid/IOHIDEvent.cpp                              optional iokitcpp

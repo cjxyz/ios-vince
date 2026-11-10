@@ -46,7 +46,18 @@ declaraciones (`kvtophys` sin declarar, `pmap_paddr_t` desconocido), no por el d
 1. **Verificar 0181 en nuestro teléfono**: `vince-boot-gpu.img` (sin raíz, `mmcprobe=1 adreno=11 adreno_pause=2000`) y ver hasta qué paso llega.
    ✅ 2026-11-10: los 11 pasos SUCCESS en este teléfono (detalle en PROGRESS.md).
    Ojo: `vince_adreno_init()` solo se ejecuta tras inicializar `vince_mmc` (`rd=mmcroot0` o `mmcprobe=1`), porque la llama `vince_input_start()`.
-2. **Portar el stack de casuarina** (kernel 0982–0988 + userland Mesa/EAGL/inject) sobre nuestro árbol. Puntos a resolver:
+2. **Fase A — kernel** (parche 0183 `vince-gpu-service`, 2026-11-10):
+   - `vince_adreno.c` = el de casuarina 0982 (nuestro 0181 + exportaciones `vince_gpu_ready/parameter/submit/done/last`,
+     **corrección del ring**, que antes no daba la vuelta (`rb_wptr++`), y un hilo propio que arranca 3 s después de
+     `vince_input_start`). Conserva nuestro firmware compilado. Tras el paso 11 llama a `VinceGPUStart()`.
+   - `VinceGPU.cpp` = casuarina 0982/0984/0986–0988/0991: servicio IOKit `VinceGPU` + `VinceGPUUserClient` con la interfaz msm DRM
+     (selectores 0x09, 0x40–0x4c), self-test (`adreno_test=1`), buffers contiguos, **pool de 192 MiB** en `0xec000000–0xf8000000`
+     y `vincecache=1` (mapeos cacheados con `FlushPoC_DcacheRegion`). Sin `vinceplace` (0989/0990), que queda para la fase E.
+   - `tools/mkadt_vince.py`: la RAM de XNU pasa de `0x58000000` a `0x4c000000` (`0xa0000000–0xebf00000` + panic log hasta
+     `0xec000000`), para que el pool sea RAM que XNU nunca gestiona (casuarina recortaba `memSize` en `arm_vm_init.c` con el
+     mismo efecto). `verify_adt_vince.py` comprueba que no se solapan.
+   - Licencias: los parches de kernel derivados de HackiOS son APSL 2.0 (como XNU) y el userland es MIT (CREDITS.md de casuarina).
+3. **Portar el stack de casuarina** (kernel 0982–0988 + userland Mesa/EAGL/inject) sobre nuestro árbol. Puntos a resolver:
    - encajarlo con nuestro `SweetFramebuffer`/`SweetSurface` (0046);
    - el mapa de RAM: casuarina usa XNU en `0x20000000–0x7fffffff` con el pool arriba; nosotros, XNU en `0xA0000000` y 0181 en `0x47800000`/`0x95000000`;
    - el firmware fuera del árbol si es posible, y Mesa compilado en CI de macOS.

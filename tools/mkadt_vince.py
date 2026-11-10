@@ -21,7 +21,11 @@ import adt  # noqa: E402
 # Vince (MSM8953) Hardware Definitions:
 # DRAM Base: 0xa0000000 (verified by live /proc/iomem: 0xa0000000-0xffffffff is 1.5 GB contiguous)
 PHYS_BASE = 0xa0000000
-MEM_SIZE = 0x58000000  # 1.375 GB contiguous (safe headroom below TZ/modem at top)
+# XNU's RAM, panic log included. Upstream gave 0x58000000 (up to 0xf8000000); the top 192 MiB of that now belong to
+# the GPU pool of iokit/Kernel/arm/VinceGPU.cpp (GPU_POOL_PA/SIZE), which must be RAM XNU never manages.
+MEM_SIZE = 0x4c000000
+GPU_POOL_PA, GPU_POOL_SIZE = 0xec000000, 0x0c000000
+assert PHYS_BASE + MEM_SIZE <= GPU_POOL_PA and GPU_POOL_PA + GPU_POOL_SIZE <= 0xf8000000
 
 PANIC_LOG_SIZE = 0x100000  # 1 MB panic log buffer
 

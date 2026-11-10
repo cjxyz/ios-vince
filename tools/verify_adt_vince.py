@@ -50,6 +50,10 @@ def verify_adt(adt_path):
     if dram_base < 0x100000000:
         assert dram_base >= 0x92100000, f"DRAM base 0x{dram_base:x} overlaps Qualcomm modem/TZ carveouts!"
         print("  [PASS] DRAM base is safely above all hardware carve-outs")
+    # The VinceGPU pool (0xec000000-0xf8000000) must stay outside XNU's RAM and its panic log
+    panic_end = dram_base + dram_size + 0x100000
+    assert panic_end <= 0xec000000, f"XNU RAM + panic log end 0x{panic_end:x} overlaps the GPU pool at 0xec000000"
+    print(f"  [PASS] XNU RAM + panic log end at 0x{panic_end:x}, below the GPU pool (0xec000000-0xf8000000)")
 
     # Check 3: Check arm-io peripherals
     for dev in arm_io.children:
