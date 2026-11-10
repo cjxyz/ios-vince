@@ -91,6 +91,16 @@ const char *loader_boot(uintptr_t dtb)
 	if (rd_end > p->phys_base && rd_start < p->phys_base + p->mem_size)
 		return "ramdisk overlaps kernel memory";
 
+	/* XNU's RAM window comes from mkadt/mkpayload (sized on a 4 GB unit); it must be real DRAM on this phone. */
+	uint64_t mb[8], ms[8];
+	int nmem = fdt_memory(dtb, mb, ms, 8), inside = 0;
+	for (int i = 0; i < nmem; i++)
+		if (p->phys_base >= mb[i] && p->phys_base + p->mem_size <= mb[i] + ms[i])
+			inside = 1;
+	con_hex2("XNU RAM", "base=", (uint32_t)p->phys_base, "end=", (uint32_t)(p->phys_base + p->mem_size));
+	if (nmem && !inside)
+		return "XNU RAM window is not inside DRAM";
+
 	con_str("LOADER",  "Copying kernel segments...");
 	for (uint32_t i = 0; i < p->nsegs; i++) {
 		const struct payload_seg *s = &p->segs[i];

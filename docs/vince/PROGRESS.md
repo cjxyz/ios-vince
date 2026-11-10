@@ -7,7 +7,7 @@
 | CI del kernel en verde (este fork) | ✅ | Run 42761468387, macos-15 + Xcode 16.0, 9m35s, `kernel.development.vince` de 17 MB |
 | Auditoría DTS stock ↔ parches | ✅ | `tools/audit_vince_hw.py`: solo falta el watchdog, que LK deja apagado |
 | Shim + texto en pantalla | ✅ | MMU 4K, GICv2 y timer virtual OK en el teléfono |
-| XNU 1 núcleo (GICv2 + timer) | 🧪 listo para probar | `artifacts/vince-boot-xnu.img` |
+| XNU 1 núcleo (GICv2 + timer) | 🔴 reinicia | El shim salta a XNU y el teléfono reinicia a Android sin salida de XNU |
 | Root en eMMC → launchd | ⏳ | |
 | Emulación LSE/LDAPR | ❌ falta | Upstream no la tiene; candidato: portar topaz 0081 |
 | SMP 8 núcleos | ⏳ | |
@@ -65,3 +65,7 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
   - **Watchdog: LK no lo deja activo.** Con el shim colgado, la pantalla siguió fija sin reinicio (el bark está a 11 s y nadie lo atendía).
 - **Segunda prueba (`b45d8cf9…`): diagnóstico completo.** `IMAGE 0x10080000` confirma la dirección de carga de LK; `MMU`, `GIC` y `TIMER` OK; `LOADER: no initrd in /chosen` (esperado, sin ramdisk) y `READY Shim diagnostics PASS! Halting.`
 - Siguiente imagen: `artifacts/vince-boot-xnu.img` (17 686 528 B, SHA256 `53701240…`) = shim + DTB stock + payload (kernel del CI + ADT). Cmdline por defecto de `mkpayload_vince.py`: `debug=0xc serial=3 cpus=1 keepsyms=1 -enable_kprintf_spam -noprogress wdt=-1 wdt_test=no_user_checkin sweettouch=0 sweetkeys=0`. No hay root, así que lo esperado en el mejor caso es el log de XNU en pantalla hasta esperar al dispositivo raíz.
+- **Primer salto a XNU** (`vince-boot-xnu.img` `53701240…`): `LOADER: Copying kernel segments...`, `ENTRY 0xA1480700`, `BOOTARG 0xA296F000`, `HANDOVER ... entering XNU`, y **el teléfono reinicia a Android**. No aparece ninguna fila de la consola temprana de XNU (`sweet_early.c`, que limpia una fila en negro en `0x90001000`), así que muere antes de `arm_init`.
+  - Descubierto en `0113-vince-shim-halt`: el shim real de upstream tenía un monitor USB en CPU1 y compartía con XNU la página `0x913F0000` (marcas SMP y palabra HALT). El shim del repo es una versión reducida sin eso.
+  - Hipótesis principal: la ventana de RAM de XNU (`0xA0000000` + `0x57F00000`) se calculó con el `/proc/iomem` de un teléfono de 4 GB. Si esta unidad tiene otra RAM o otro mapa, XNU toca memoria inexistente o protegida y Qualcomm reinicia.
+  - Nuevos diagnósticos en el shim: (1) `PREV XNU`/`PREV REG` muestran las marcas que deja `start.s` en `0x913F0800`/`0x913F0C00` (0x13 = `start_first_cpu`, 0x14 = antes de activar la MMU) y luego las borra; (2) `DRAM` lista el nodo `/memory` que rellena LK; (3) el loader no salta si la ventana de XNU no está dentro de la DRAM. Imágenes nuevas: `vince-boot-xnu.img` `33aeb896…` y `vince-boot-diag.img`.

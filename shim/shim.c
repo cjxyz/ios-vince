@@ -111,6 +111,44 @@ void secondary_main(uint64_t cpu_id)
 	}
 }
 
+/*
+ * XNU's start.s leaves progress marks at PA 0x913F0800 + 8 * core and registers at 0x913F0C00 + 0x40 * core,
+ * near the end of the splash carve-out where LK's logo does not reach. They usually survive the warm reset after
+ * a crash, so show what the previous boot left for the boot CPU, then clear them for the next run.
+ * 0x13: start_first_cpu reached (MMU off), 0x14: about to enable the MMU in common_start.
+ */
+#define MARK_PA		0x913F0800UL
+#define DIAG_PA		0x913F0C00UL
+
+static void show_prev_marks(void)
+{
+	volatile uint64_t *mark = (volatile uint64_t *)MARK_PA;
+	volatile uint64_t *diag = (volatile uint64_t *)DIAG_PA;
+
+	static const char *const name[8] = { "r0=", "r1=", "r2=", "r3=", "r4=", "r5=", "r6=", "r7=" };
+
+	con_hex2("PREV XNU", "cpu0=", (uint32_t)mark[0], "cpu1=", (uint32_t)mark[1]);
+	for (int i = 0; i < 8; i += 2)
+		con_hex2("PREV REG", name[i], (uint32_t)diag[i], name[i + 1], (uint32_t)diag[i + 1]);
+	for (int i = 0; i < 8; i++) {
+		mark[i] = 0;
+		diag[i] = 0;
+	}
+	__asm__ volatile("dsb sy" ::: "memory");
+}
+
+static void show_dram(uintptr_t fdt)
+{
+	uint64_t base[8], size[8];
+	int n = fdt_memory(fdt, base, size, 8);
+	if (!n)
+		con_str("DRAM", "no memory node in DTB");
+	for (int i = 0; i < n; i++) {
+		con_hex("DRAM", base[i]);
+		con_hex2("", "MB=", (uint32_t)(size[i] >> 20), 0, 0);
+	}
+}
+
 void shim_main(void *fdt)
 {
 	/* 1. Paint screen and print initial banner immediately */
@@ -121,6 +159,8 @@ void shim_main(void *fdt)
 	con_str("CPU",     "8x Cortex-A53 ARMv8.0-A");
 	con_hex("FDT",     (uintptr_t)fdt);
 	con_hex("IMAGE",   (uintptr_t)_head);
+	show_prev_marks();
+	show_dram((uintptr_t)fdt);
 
 	/* 2. Setup 4KB Translation Granule MMU */
 	struct mmu_info info;
