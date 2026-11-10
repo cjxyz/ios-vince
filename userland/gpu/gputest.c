@@ -9,6 +9,9 @@
  * From pixellia/ios-casuarina userland/gpu/gputest.c (HackiOS lineage, MIT, see CREDITS.md). Here it may be
  * started by launchd before the kernel's VinceGPU service exists (the Adreno comes up a few seconds after the
  * touch screen), so it waits up to 60 s for the service first: without it Mesa would quietly use softpipe.
+ * Every step is announced, a fatal signal is reported with the step it hit, and at the end (or after a crash
+ * or the 90 s timeout) the lines said so far are printed again every 10 s for 3 minutes, so they can still
+ * be read on the screen once the boot log has scrolled past them.
  */
 #include <fcntl.h>
 #include <signal.h>
@@ -52,6 +55,12 @@ extern unsigned char OSMesaMakeCurrent(OSMesaContext context, void *buffer, unsi
 extern void (*OSMesaGetProcAddress(const char *name))(void);
 
 static int console = -1;
+static const char *step = "start";
+
+/* what was said, for the summary printed again at the end */
+#define HISTORY 24
+static char history[HISTORY][120];
+static int history_count;
 
 static void
 say(const char *format, ...)
@@ -75,6 +84,42 @@ say(const char *format, ...)
 		(void)!write(console, line, (size_t)n);
 	}
 	(void)!write(1, line, (size_t)n);
+	if (history_count < HISTORY) {
+		line[n - 1] = '\0';
+		snprintf(history[history_count++], sizeof(history[0]), "%s", line);
+	}
+}
+
+static void
+replay(void)
+{
+	char line[160];
+
+	for (int i = 0; i < history_count; i++) {
+		int n = snprintf(line, sizeof(line), "gputest summary %d/%d: %s\n", i + 1, history_count, history[i]);
+
+		if (console >= 0 && n > 0) {
+			(void)!write(console, line, (size_t)(n < (int)sizeof(line) ? n : (int)sizeof(line) - 1));
+		}
+	}
+}
+
+/* the summary every 10 s for 3 minutes, then exit */
+static void __attribute__((noreturn))
+finish(int code)
+{
+	for (int i = 0; i < 18; i++) {
+		sleep(10);
+		replay();
+	}
+	_exit(code);
+}
+
+static void
+fatal(int signal)
+{
+	say("FAIL: signal %d during step \"%s\"", signal, step);
+	finish(4);
 }
 
 #define FUNCTIONS \
@@ -140,8 +185,8 @@ static void
 timeout(int signal)
 {
 	(void)signal;
-	say("FAIL: no end in 90 s (the GPU did not answer?)");
-	_exit(3);
+	say("FAIL: no end in 90 s, stuck in step \"%s\" (the GPU did not answer?)", step);
+	finish(3);
 }
 
 int
@@ -161,6 +206,11 @@ main(void)
 	char log[512] = "";
 
 	console = open("/dev/console", O_WRONLY | O_NOCTTY);
+	signal(SIGSEGV, fatal);
+	signal(SIGBUS, fatal);
+	signal(SIGILL, fatal);
+	signal(SIGABRT, fatal);
+	signal(SIGFPE, fatal);
 	say("start");
 	for (int waited = 0;; waited++) {
 		io_service_t gpu = IOServiceGetMatchingService(0, IOServiceMatching("VinceGPU"));
@@ -172,28 +222,40 @@ main(void)
 		}
 		if (waited == 60) {
 			say("FAIL: no VinceGPU service after 60 s (boot-arg gpu=1?)");
-			return 2;
+			finish(2);
 		}
 		sleep(1);
 	}
 	signal(SIGALRM, timeout);
 	alarm(90);
 
+	step = "OSMesaCreateContextAttribs";
+	say("step: %s", step);
 	OSMesaContext context = OSMesaCreateContextAttribs(attributes, NULL);
 	if (context == NULL) {
 		say("FAIL: no ES2 context");
-		return 1;
+		finish(1);
 	}
-	if (!OSMesaMakeCurrent(context, window, GL_UNSIGNED_BYTE, W, H) || !load()) {
-		say("FAIL: no current context or functions");
-		return 1;
+	step = "OSMesaMakeCurrent";
+	say("step: %s", step);
+	if (!OSMesaMakeCurrent(context, window, GL_UNSIGNED_BYTE, W, H)) {
+		say("FAIL: no current context");
+		finish(1);
 	}
+	step = "load functions";
+	if (!load()) {
+		say("FAIL: no GL functions");
+		finish(1);
+	}
+	step = "glGetString";
 	renderer = (const char *)glGetString(GL_RENDERER);
 	say("vendor %s", (const char *)glGetString(GL_VENDOR));
 	say("renderer %s", renderer != NULL ? renderer : "?");
 	say("version %s", (const char *)glGetString(GL_VERSION));
 
 	glViewport(0, 0, W, H);
+	step = "clear";
+	say("step: %s", step);
 
 	glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT);
@@ -207,6 +269,8 @@ main(void)
 		say("clear FAIL");
 	}
 
+	step = "shaders and triangle";
+	say("step: %s", step);
 	vs = shader(GL_VERTEX_SHADER, "attribute vec2 p; void main() { gl_Position = vec4(p, 0.0, 1.0); }");
 	fs = shader(GL_FRAGMENT_SHADER, "precision mediump float; void main() { gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0); }");
 	if (vs != 0 && fs != 0) {
@@ -239,8 +303,8 @@ main(void)
 
 	if (renderer != NULL && (strstr(renderer, "softpipe") != NULL || strstr(renderer, "llvmpipe") != NULL)) {
 		say("SOFTWARE renderer: the drawing did not go through the GPU (%d of 2 drawing checks)", passed);
-		return 2;
+		finish(2);
 	}
 	say("%s: %d of 2 drawing checks on the GPU", passed == 2 ? "PASS" : "FAIL", passed);
-	return passed == 2 ? 0 : 1;
+	finish(passed == 2 ? 0 : 1);
 }
