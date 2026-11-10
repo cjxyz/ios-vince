@@ -35,8 +35,8 @@ env:
 
 jobs:
   build:
-    # macos-14 ships Xcode 15.x whose iig matches the xnu-8796 IORPC ABI
-    runs-on: macos-14
+    # macos-14 (Xcode 15.x, iig matching the xnu-8796 IORPC ABI) was retired; macos-15 uses its oldest installed Xcode
+    runs-on: macos-15
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
