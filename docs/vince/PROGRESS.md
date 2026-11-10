@@ -14,7 +14,8 @@
 | SpringBoard / lock screen | ✅ | **Pantalla de bloqueo de iOS 16.7.16 en el Redmi 5 Plus** (2026-11-10) |
 | Touch TD4310 + teclas | ✅ | Touch y botones power/volumen funcionan |
 | Retroiluminación (WLED) | ✅ | 0182: se apaga al bloquear y vuelve al desbloquear |
-| Rendimiento | 🟡 en curso | Framebuffer a 10 Hz por defecto; CPU a 1,4 GHz (sin CPR); sin GPU |
+| Rendimiento | 🟡 limitado por render en CPU | `sweetfb_hz=30` no cambia mucho; hace falta la GPU |
+| Reinicio a fastboot | ✅ | 0184: volumen + y − 3 s; 0185: panics y reinicios van a fastboot |
 | USB ECM / log por red | ⏳ | |
 | Wi‑Fi / BT | ⏳ | parches 0119–0179 de upstream |
 | GPU Adreno 506 | 🟡 fase A OK | Servicio `VinceGPU` registrado; self-test 3/4 (falla el primer envío); falta userland (plan en [GPU.md](GPU.md)) |
@@ -144,3 +145,5 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
   - 2 PASS (16 palabras), 3 PASS (dos IB en un envío), 4 PASS (100 envíos, último fence 103): **el ring da la vuelta** y los fences avanzan.
   - Pendiente con la prueba 1: `d[1]` debería seguir siendo el `0x11111111` que escribe la CPU antes del envío, así que no basta con "la GPU no escribió". Sospechas: el primer fence se da por cumplido antes de tiempo (el valor inicial de scratch+0x20) o un problema de visibilidad o caché en el primer uso del buffer. Hay que resolverlo antes de conectar Mesa.
 - **Causa probable del fallo de la prueba 1**: el contador de fences (`scratch+0x20`, PA `0x47830020`) nunca se inicializaba y esa RAM conserva su contenido tras un reinicio en caliente. Con el 103 del arranque anterior, `vince_gpu_done(1)` daba el primer fence por cumplido antes de que la GPU ejecutara. **Parche 0186 `vince-gpu-fence-reset`**: lo pone a 0 en el paso 8 y añade a la prueba 1 una segunda lectura a los 50 ms para diagnóstico. Aplica en cadena 0182–0186.
+- **0184 probado**: volumen + y volumen − durante 3 s → `VINCE: rebooting into fastboot` → el teléfono entra en **fastboot**. El reinicio warm con el motivo en IMEM funciona: ya no hace falta el botón de encendido para salir de iOS.
+- Kernel 0182–0185 con iOS (`vince-boot-smp.img` `7dab601f…`, `sweetfb_hz=30`): llega a la pantalla de bloqueo sin problemas, con el pool de GPU reservado (RAM de XNU hasta `0xec000000`). **Subir el refresco a 30 Hz apenas cambia la fluidez**: el límite es el render por CPU de CoreAnimation, no la copia al panel, lo que confirma la GPU como prioridad.
