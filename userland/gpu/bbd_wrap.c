@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/sysctl.h>
 
 #define REAL "/usr/libexec/real/backboardd"
@@ -40,6 +41,15 @@ main(int argc, char *argv[])
 			}
 		}
 		fclose(f);
+	}
+	/* boot-arg bbdlog=1: the window server's stderr/stdout (topaz-gl:, redwood-gl:, crashes) to the console */
+	if (strstr(bootargs, "bbdlog=1") != NULL) {
+		int console = open("/dev/console", O_WRONLY | O_NOCTTY);
+		if (console >= 0) {
+			dup2(console, 1);
+			dup2(console, 2);
+			close(console);
+		}
 	}
 	argv[0] = (char *)REAL;
 	execv(REAL, argv);

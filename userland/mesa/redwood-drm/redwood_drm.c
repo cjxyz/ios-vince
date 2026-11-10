@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/sysctl.h>
 
 #include <IOKit/IOKitLib.h>
 
@@ -150,7 +151,8 @@ redwood_drm_map(int fd, uint32_t handle, uint64_t size)
 	mach_vm_address_t address = 0;
 	mach_vm_size_t mapped = 0;
 
-	IOOptionBits options = kIOMapAnywhere | kIOMapWriteCombineCache;
+	static int cached = -1;
+	IOOptionBits options;
 	const char *cache = getenv("REDWOOD_DRM_CACHE");
 
 	(void)fd;
@@ -161,12 +163,20 @@ redwood_drm_map(int fd, uint32_t handle, uint64_t size)
 	 * IOUserClient::mapClientMemory64 replaces the one the driver's clientMemoryForType chose with
 	 * the caller's (kIOMapUserOptionsMask covers kIOMapCacheMask), and on vince the pool is RAM XNU
 	 * does not manage, whose default is device memory, where Mesa's unaligned stores fault
-	 * (SIGBUS, BUS_ADRALN). REDWOOD_DRM_CACHE=copyback maps it cached instead, for the kernel's
-	 * vincecache=1 mode, which does the cache maintenance.
+	 * (SIGBUS, BUS_ADRALN). With the kernel's vincecache=1, which does the cache maintenance, the
+	 * map is an ordinary cached one (reading a frame back: ~70 MB/s write-combined, several times
+	 * that cached); REDWOOD_DRM_CACHE=copyback or =writecombine overrides the choice.
 	 */
-	if (cache != NULL && strcmp(cache, "copyback") == 0) {
-		options = kIOMapAnywhere | kIOMapCopybackCache;
+	if (cached < 0) {
+		char args[1024] = "";
+		size_t n = sizeof(args) - 1;
+
+		cached = sysctlbyname("kern.bootargs", args, &n, NULL, 0) == 0 && strstr(args, "vincecache=1") != NULL;
+		if (cache != NULL) {
+			cached = strcmp(cache, "copyback") == 0;
+		}
 	}
+	options = kIOMapAnywhere | (cached ? kIOMapCopybackCache : kIOMapWriteCombineCache);
 	if (IOConnectMapMemory64(connection, handle, mach_task_self(), &address, &mapped, options) != 0) {
 		return (void *)-1;              /* mmap()'s MAP_FAILED */
 	}

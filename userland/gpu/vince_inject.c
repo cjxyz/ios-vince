@@ -245,8 +245,11 @@ topaz_map_memory(io_connect_t connect, uint32_t memoryType, task_port_t intoTask
 			size_t n = sizeof(args);
 			cached = sysctlbyname("kern.bootargs", args, &n, NULL, 0) == 0 && strstr(args, "vincecache=1") != NULL;
 		}
-		/* vincecache=1: the kernel does the cache maintenance (VinceGPU.cpp), so the map can be an ordinary cached one */
-		options |= cached ? kIOMapCopybackCache : kIOMapWriteCombineCache;
+		/*
+		 * vincecache=1: the kernel does the cache maintenance (VinceGPU.cpp), so the map can be an ordinary cached one.
+		 * The cache field is replaced, not or-ed: redwood-drm already asks for one, and 0x400 | 0x300 is another mode.
+		 */
+		options = (options & ~kIOMapCacheMask) | (cached ? kIOMapCopybackCache : kIOMapWriteCombineCache);
 	}
 	r = IOConnectMapMemory64(connect, memoryType, intoTask, address, size, options);
 
