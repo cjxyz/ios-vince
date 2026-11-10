@@ -8,10 +8,10 @@
 | Auditoría DTS stock ↔ parches | ✅ | `tools/audit_vince_hw.py`: solo falta el watchdog, que LK deja apagado |
 | Shim + texto en pantalla | ✅ | MMU 4K, GICv2 y timer virtual OK en el teléfono |
 | XNU 1 núcleo (GICv2 + timer) | ✅ | Kernel completo hasta `Waiting on ... Apple_HFS` (sin root) |
-| Root en eMMC → launchd | 🟡 parcial | Raíz montada y launchd ejecutándose; panic por `launchd_cache_loader` (faltaban boot-args) |
+| Root en eMMC → launchd | ✅ | launchd pasa las tareas de arranque y lanza LaunchDaemons |
 | Emulación LSE/LDAPR | ❌ falta | Upstream no la tiene; candidato: portar topaz 0081 |
 | SMP 8 núcleos | ⏳ | |
-| SpringBoard / lock screen | ⏳ | |
+| SpringBoard / lock screen | 🟡 arranca y se cae | `process 346 crashed SpringBoard: Too many corpses`; launchd lo relanza |
 | Touch TD4310 + teclas | ⏳ | 0099 no vota reguladores RPM (L10/L6) |
 | USB ECM / log por red | ⏳ | |
 | Wi‑Fi / BT | ⏳ | parches 0119–0179 de upstream |
@@ -93,3 +93,4 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
 - `userdata` flasheado con `ios16-root.simg` (`-S 512M` falló en el bloque 9: `max-download-size` es `0x1fe00000`; repetido con un bloque menor). El último `Writing` tarda bastante, pero termina.
 - **Primer arranque con raíz iOS** (`vince-boot-root.img` `61b631e3…`): XNU monta la raíz desde la eMMC y ejecuta userland de iOS. Panic: `launchd_cache_loader[22] exited -- exit reason namespace 7 subcode 0x1 description: Unable to find AMFI`, `iBoot version: vince-shim`, `secure boot?: NO`. Causa: faltaban los boot-args de userland de ios-sweet (`launchd_unsecure_cache=1`, `ignition_level=1`, `unentitled_ios_sim_launch=1`). Hecho relevante: **dyld y launchd del iPhone X arrancan en el Cortex-A53**, así que al menos esa parte del userland no tropieza con LSE.
 - Nueva `vince-boot-root.img` con esos boot-args.
+- **Segundo arranque con raíz** (`vince-boot-root.img` `df420217…`, con los boot-args de userland): sin panic. launchd lanza los daemons y **SpringBoard llega a ejecutarse** (pid 346), pero se cae: `crashed: Too many corpses`, igual que sweet en su boot 0041u. El sistema sigue imprimiendo logs. Pendiente: ver si se estabiliza en los 4-5 min que sweet tardaba en el primer arranque y capturar el motivo real del crash.
