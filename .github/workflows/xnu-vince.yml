@@ -15,6 +15,9 @@ on:
       keep_going:
         description: make -k (collect all compile errors in one run)
         default: "true"
+      runner:
+        description: runner label (macos-15; macos-15-intel is another queue when the arm64 one is backed up)
+        default: macos-15
   push:
     branches: [main]
     paths:
@@ -36,7 +39,7 @@ env:
 jobs:
   build:
     # macos-14 (Xcode 15.x, iig matching the xnu-8796 IORPC ABI) was retired; macos-15 uses its oldest installed Xcode
-    runs-on: macos-15
+    runs-on: ${{ inputs.runner || 'macos-15' }}
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4

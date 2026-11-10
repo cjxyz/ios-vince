@@ -16,6 +16,8 @@ Workflow: `.github/workflows/xnu-vince.yml` (runner `macos-14`, Xcode 15).
 - ⚠️ Los parches no críticos que no se aplican **solo generan un warning**. Hay que revisar el log de cada build.
 - Artefactos: `xnu-kernel-vince` (`kernel.development.vince` + SHA256SUMS) y `xnu-buildtree` (árbol para compilar ficheros sueltos).
 - Coste: repo público, así que no consume minutos de pago.
+- Cola: la de `macos-15` (arm64) a veces se satura. Para usar otra: `gh workflow run xnu-vince -R cjxyz/ios-vince --ref vince-port -f runner=macos-15-intel`
+  (mismo software, Mac Intel; compila el kernel arm64 igual).
 
 ## 2. Userland auxiliar (GitHub Actions)
 Workflow `.github/workflows/userland.yml`: cada `userland/src/NAME.c` se convierte en `vince-NAME` (Mach-O arm64 con firma ad-hoc),
