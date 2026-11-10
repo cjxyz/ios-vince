@@ -6,7 +6,7 @@
 | Fork y documentación | ✅ | 2026-11-10 |
 | CI del kernel en verde (este fork) | ✅ | Run 42761468387, macos-15 + Xcode 16.0, 9m35s, `kernel.development.vince` de 17 MB |
 | Auditoría DTS stock ↔ parches | ✅ | `tools/audit_vince_hw.py`: solo falta el watchdog |
-| Shim + texto en pantalla | ⏳ | |
+| Shim + texto en pantalla | 🧪 listo para probar | `artifacts/vince-boot-diag.img` |
 | XNU 1 núcleo (GICv2 + timer) | ⏳ | |
 | Root en eMMC → launchd | ⏳ | |
 | Emulación LSE/LDAPR | ❌ falta | Upstream no la tiene; candidato: portar topaz 0081 |
@@ -45,5 +45,8 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
 - Rutas corregidas: `shim/build.py` usa `shim/` y `build/shim/` del propio repo; las tools importan `adt` desde `tools/`.
 - **Bug corregido en `shim/build.py`**: metía `vince.adt` como ramdisk, pero `shim/loader.c` busca allí el payload `VINCEXNU`. Ahora el ramdisk es `artifacts/vince.payload`, y `--payload`/`--dtb` son configurables.
 - Generados en local desde el kernel del CI: `vince.adt` (10 804 B, pasa `verify_adt_vince.py`) y `vince.payload` (17 170 960 B; entry `0xfffffff007480700`, phys_base `0xa0000000`, mem_size `0x57f00000`).
-- Bloqueado: instalar LLVM en WSL requiere `sudo` con contraseña (lo hace el usuario).
-- Siguiente paso: compilar el shim, sacar `live_fdt.dtb` del teléfono y hacer la primera prueba `fastboot boot`, solo con el diagnóstico del shim.
+- LLVM instalado por el usuario (clang 21.1.8). El shim compila: `vince-shim.bin` de 147 456 B, con cabecera Image arm64 (`ARM\x64` en 0x38) y `_end` en 0x2c para el DTB_OFFSET de LK.
+- **Kernel sin LSE/LDAPR/PAC**: en el desensamblado con `llvm-objdump` solo aparece un `ldumaxah` dentro de `K256` (constantes de SHA-256, datos). El kernel corre en un A53; la emulación sigue haciendo falta para el userland.
+- DTB sin root: `tools/mkdtb_vince.sh` compila `dtc` desde `vince-stock/scripts/dtc` y genera `stock_vince.dtb` (358 630 B, msm-id 0x125, board-id 0x1000b/0x8). Es reproducible byte a byte.
+- Imagen de diagnóstico lista: `artifacts/vince-boot-diag.img` (shim + DTB stock, sin ramdisk). SHA256 `c91545eb…`.
+- Siguiente paso: primera prueba en el teléfono (`fastboot boot artifacts/vince-boot-diag.img`). Lo esperado: fondo azul marino con PROJECT/DEVICE/CPU/FDT, MMU, GIC y TIMER, y luego `LOADER: no initrd in /chosen`. Watchdog: si reinicia a los ~11 s, LK lo dejó activo.

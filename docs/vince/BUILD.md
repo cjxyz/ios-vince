@@ -28,13 +28,16 @@ python3 tools/mkadt_vince.py artifacts/vince.adt          # ADT: identidad iPhon
 python3 tools/verify_adt_vince.py artifacts/vince.adt     # comprueba GIC, eMMC, touch y DRAM
 python3 tools/mkpayload_vince.py out/kernel/kernel.development.vince artifacts/vince.adt artifacts/vince.payload \
     [--cmdline "..."]                                     # payload VINCEXNU = kernel + ADT
-adb pull /sys/firmware/fdt artifacts/live_fdt.dtb         # DTB del teléfono, desde Android con root
-python3 shim/build.py                                     # → artifacts/vince-boot.img
+tools/mkdtb_vince.sh                                      # DTB desde ../vince-stock → artifacts/stock_vince.dtb
+#   (alternativa con root: adb pull /sys/firmware/fdt artifacts/live_fdt.dtb)
+python3 shim/build.py --dtb artifacts/stock_vince.dtb     # → artifacts/vince-boot.img
 ```
 - `shim/build.py` compila en `build/shim/` y empaqueta un boot.img v0 (page 2048): **kernel** = shim + DTB anexado, **ramdisk** = payload.
   Opciones `--payload` y `--dtb` (por defecto `artifacts/vince.payload` y `artifacts/live_fdt.dtb`).
 - Sin payload, el shim solo muestra su diagnóstico (MMU, GIC, timer) y se detiene. Sirve como primera prueba de pantalla.
-- Sin DTB anexado, LK puede rechazar la imagen.
+- Sin DTB anexado, LK puede rechazar la imagen. `tools/mkdtb_vince.sh` compila `dtc` desde las fuentes del kernel stock
+  (solo necesita clang) y genera el DTB de `msm8953-qrd-sku3-vince.dts`, con `qcom,msm-id` 0x125 y `qcom,board-id` 0x1000b/0x8.
+- Imagen de diagnóstico (solo el shim, sin XNU): `python3 shim/build.py --payload /nonexistent --dtb artifacts/stock_vince.dtb`.
 - `artifacts/`, `build/` y `out/` están en `.gitignore`.
 
 ## 4. Imagen raíz iOS
