@@ -22,18 +22,20 @@ Workflow `.github/workflows/userland.yml`: cada `userland/src/NAME.c` se convier
 publicado en el artefacto `userland-bin`.
 
 ## 3. ADT, payload y boot.img (local, WSL)
-Herramientas: `clang`, `ld.lld`, `llvm-objcopy`, `llvm-nm`, `python3`.
+Herramientas: `python3` y LLVM (`sudo apt install clang lld llvm`), que aporta `clang`, `ld.lld`, `llvm-objcopy` y `llvm-nm`.
 ```
-python3 tools/mkadt_vince.py ...            # → artifacts/vince.adt (identidad iPhone10,3/D22AP, RAM 0xA0000000+1.5GB)
-python3 tools/verify_adt_vince.py ...       # comprueba el ADT
-python3 tools/mkpayload_vince.py KERNEL ADT OUT --cmdline "..."
-python3 shim/build.py                       # → artifacts/vince-boot.img (boot.img v0, page 2048)
+python3 tools/mkadt_vince.py artifacts/vince.adt          # ADT: identidad iPhone10,3/D22AP, RAM 0xA0000000
+python3 tools/verify_adt_vince.py artifacts/vince.adt     # comprueba GIC, eMMC, touch y DRAM
+python3 tools/mkpayload_vince.py out/kernel/kernel.development.vince artifacts/vince.adt artifacts/vince.payload \
+    [--cmdline "..."]                                     # payload VINCEXNU = kernel + ADT
+adb pull /sys/firmware/fdt artifacts/live_fdt.dtb         # DTB del teléfono, desde Android con root
+python3 shim/build.py                                     # → artifacts/vince-boot.img
 ```
-- ⚠️ `shim/build.py` busca las fuentes en `<padre del repo>/vince-bringup/shim` y el DTB en
-  `research/device_dumps/live_fdt.dtb`, que no existen en el repo. Hay que adaptar las rutas a `shim/`.
-- ⚠️ `tools/mkpayload_vince.py` importa `adt` desde `upstream/ios-sweet/tools`, pero el repo ya incluye `tools/adt.py`.
-- ⚠️ `shim/build.py` busca herramientas por winget (Windows). En WSL basta con tenerlas en el PATH.
-- DTB del teléfono: copiar `/sys/firmware/fdt` desde Android con root o recovery (`adb pull /sys/firmware/fdt live_fdt.dtb`).
+- `shim/build.py` compila en `build/shim/` y empaqueta un boot.img v0 (page 2048): **kernel** = shim + DTB anexado, **ramdisk** = payload.
+  Opciones `--payload` y `--dtb` (por defecto `artifacts/vince.payload` y `artifacts/live_fdt.dtb`).
+- Sin payload, el shim solo muestra su diagnóstico (MMU, GIC, timer) y se detiene. Sirve como primera prueba de pantalla.
+- Sin DTB anexado, LK puede rechazar la imagen.
+- `artifacts/`, `build/` y `out/` están en `.gitignore`.
 
 ## 4. Imagen raíz iOS
 - ⚠️ El repo no incluye las herramientas de ios-sweet `tools/mkiosroot.sh` ni `sweet-root-tweaks.py`. Hay que traerlas de ios-sweet.

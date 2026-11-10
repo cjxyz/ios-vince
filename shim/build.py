@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
-"""Build the Vince Boot Shim using Clang/LLVM and pack vince-boot.img."""
+"""Build the Vince Boot Shim using Clang/LLVM and pack vince-boot.img.
+
+  shim/build.py [--payload artifacts/vince.payload] [--dtb artifacts/live_fdt.dtb]
+
+The payload (tools/mkpayload_vince.py: XNU kernel + ADT) goes in the boot.img ramdisk, where
+loader.c looks for the VINCEXNU header. Without one the shim only runs its diagnostics and halts.
+"""
+import argparse
 import os
 import sys
 import subprocess
 import shutil
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-SHIM_DIR = os.path.join(BASE_DIR, "vince-bringup", "shim")
-OUT_DIR = os.path.join(SHIM_DIR, "out")
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SHIM_DIR = os.path.join(BASE_DIR, "shim")
+OUT_DIR = os.path.join(BASE_DIR, "build", "shim")
 ARTIFACTS_DIR = os.path.join(BASE_DIR, "artifacts")
 TOOLS_DIR = os.path.join(BASE_DIR, "tools")
 
@@ -29,7 +36,7 @@ def find_tool(name):
                 return os.path.join(root, f"{name}.exe")
     return name
 
-def build():
+def build(payload_path, dtb_path):
     print("[*] Building Vince Boot Shim...")
     clang = find_tool("clang")
     ld_lld = find_tool("ld.lld")
@@ -112,9 +119,10 @@ def build():
     print(f"[+] Final Vince Shim Binary: {final_shim} ({os.path.getsize(final_shim)} bytes)")
 
     # Append live Qualcomm DTB to shim binary for LK validation
-    dtb_path = os.path.join(BASE_DIR, "research", "device_dumps", "live_fdt.dtb")
     kernel_to_pack = final_shim
-    if os.path.exists(dtb_path):
+    if not os.path.exists(dtb_path):
+        print(f"    [!] No DTB at {dtb_path}: LK may refuse an image without an appended DTB")
+    else:
         shim_dtb_path = os.path.join(ARTIFACTS_DIR, "vince-shim-dtb.bin")
         with open(final_shim, "rb") as f_shim, open(dtb_path, "rb") as f_dtb, open(shim_dtb_path, "wb") as f_out:
             f_out.write(f_shim.read())
@@ -124,22 +132,28 @@ def build():
 
     # Pack Android boot.img using mkbootimg_vince
     bootimg_path = os.path.join(ARTIFACTS_DIR, "vince-boot.img")
-    adt_path = os.path.join(ARTIFACTS_DIR, "vince.adt")
-
     sys.path.append(TOOLS_DIR)
     import mkbootimg_vince
     print("[*] Packing vince-boot.img...")
     sha = mkbootimg_vince.pack_bootimg(
         kernel_path=kernel_to_pack,
-        ramdisk_path=adt_path if os.path.exists(adt_path) else None,
+        ramdisk_path=payload_path if os.path.exists(payload_path) else None,
         out_path=bootimg_path,
         cmdline="console=null loop.max_part=7",
         page_size=2048
     )
 
+    if not os.path.exists(payload_path):
+        print(f"    [!] No payload at {payload_path}: the shim will only run its diagnostics")
     print(f"[SUCCESS] Built {bootimg_path} (SHA256: {sha})")
     return True
 
 if __name__ == "__main__":
-    success = build()
+    ap = argparse.ArgumentParser(description="Build the Vince Boot Shim and pack vince-boot.img")
+    ap.add_argument("--payload", default=os.path.join(ARTIFACTS_DIR, "vince.payload"),
+                    help="VINCEXNU payload from tools/mkpayload_vince.py, packed as the ramdisk")
+    ap.add_argument("--dtb", default=os.path.join(ARTIFACTS_DIR, "live_fdt.dtb"),
+                    help="Device DTB (adb pull /sys/firmware/fdt), appended to the shim for LK")
+    a = ap.parse_args()
+    success = build(a.payload, a.dtb)
     sys.exit(0 if success else 1)

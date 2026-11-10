@@ -21,7 +21,7 @@
 1. **CI de HEAD roto en upstream**: decidido partir de `c3c7b7f` (rama `vince-port`). Los commits VinceGPU posteriores (`f2feeae`..`401873c`) quedan fuera por ahora.
 2. **LSE/LDAPR/CAS**: no hay emulación en `xnu/patches` (no aparecen `handle_uncategorized`, `ldadd` ni `casal`).
 3. **Watchdog `0xB017000`**: el shim no lo desactiva; solo `tools/mkadt_vince.py` crea un nodo ADT `no-pmu`.
-4. **Rutas rotas** en `shim/build.py` y `tools/mkpayload_vince.py` (ver [BUILD.md](BUILD.md)).
+4. ~~Rutas rotas en `shim/build.py` y las tools~~: corregidas el 2026-11-10.
 5. **Falta tooling de la imagen raíz** (`mkiosroot.sh`).
 6. **Alimentación del touch**: comprobar si LK deja L10/L6 encendidos.
 
@@ -42,3 +42,8 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
   - Aun así, el binario contiene los símbolos de esas funciones (IOMobileFramebuffer, AppleKeyStore, `sweet_amfi`, SweetWatchdog, IOHIDEventService) y los drivers vince (`vince_mmc`, `mmcroot`, `vincetouch`, `vincekeys`, `vincesmd`, VinceWLANController, `vince_bt_*`, `vince_vtimer_intid`). Parece que los parches vince ya incluyen ese contenido. Por confirmar que no se haya perdido nada (p. ej. sweet 0065 PSCI frente a vince 0101).
   - Pendiente: desensamblar el kernel buscando LSE/LDAPR/PAC (no hay `llvm-objdump` en WSL; instalar LLVM, que además hace falta para el shim).
 - Siguiente paso: luego decidir entre desactivar el watchdog en el shim o portar la emulación LSE.
+- Rutas corregidas: `shim/build.py` usa `shim/` y `build/shim/` del propio repo; las tools importan `adt` desde `tools/`.
+- **Bug corregido en `shim/build.py`**: metía `vince.adt` como ramdisk, pero `shim/loader.c` busca allí el payload `VINCEXNU`. Ahora el ramdisk es `artifacts/vince.payload`, y `--payload`/`--dtb` son configurables.
+- Generados en local desde el kernel del CI: `vince.adt` (10 804 B, pasa `verify_adt_vince.py`) y `vince.payload` (17 170 960 B; entry `0xfffffff007480700`, phys_base `0xa0000000`, mem_size `0x57f00000`).
+- Bloqueado: instalar LLVM en WSL requiere `sudo` con contraseña (lo hace el usuario).
+- Siguiente paso: compilar el shim, sacar `live_fdt.dtb` del teléfono y hacer la primera prueba `fastboot boot`, solo con el diagnóstico del shim.
