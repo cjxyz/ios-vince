@@ -83,6 +83,7 @@ declaraciones (`kvtophys` sin declarar, `pmap_paddr_t` desconocido), no por el d
      y ejecuta el real (`/usr/libexec/real/backboardd`).
    - Build: `.github/workflows/vincegl.yml` → artefacto `vincegl-ios`. Instalación: `tools/addgpu_root.sh ROOT.img MESA_DIR GL_DIR`
      (`--no-gl` restaura el `backboardd` original).
+   - ✅ 2026-11-10: pantalla de inicio y Biblioteca de Apps con render por GPU; con `vincecache=1` se nota más fluido. Pendiente: desenfoques/materiales blancos y fondo negro.
 5. **Portar el resto del stack de casuarina** (kernel 0982–0988 + userland Mesa/EAGL/inject) sobre nuestro árbol. Puntos a resolver:
    - encajarlo con nuestro `SweetFramebuffer`/`SweetSurface` (0046);
    - el mapa de RAM: casuarina usa XNU en `0x20000000–0x7fffffff` con el pool arriba; nosotros, XNU en `0xA0000000` y 0181 en `0x47800000`/`0x95000000`;

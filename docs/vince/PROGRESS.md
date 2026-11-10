@@ -14,7 +14,7 @@
 | SpringBoard / lock screen | ✅ | **Pantalla de bloqueo de iOS 16.7.16 en el Redmi 5 Plus** (2026-11-10) |
 | Touch TD4310 + teclas | ✅ | Touch y botones power/volumen funcionan |
 | Retroiluminación (WLED) | ✅ | 0182: se apaga al bloquear y vuelve al desbloquear |
-| Rendimiento | 🟡 limitado por render en CPU | `sweetfb_hz=30` no cambia mucho; hace falta la GPU |
+| Rendimiento | 🟡 mejorando | Render por GPU + `vincecache=1` (relectura cacheada): más fluido; falta quitar la copia por CPU |
 | Reinicio a fastboot | ✅ | 0184: volumen + y − 3 s; 0185: panics y reinicios van a fastboot |
 | USB ECM / log por red | ⏳ | |
 | Wi‑Fi / BT | ⏳ | parches 0119–0179 de upstream |
@@ -165,3 +165,4 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
   - Referencia [rebopawl-official/ios-rebivincek](https://github.com/rebopawl-official/ios-rebivincek) (rama `vince`): mismo userland de GPU que casuarina, idéntico byte a byte. Su README: "colours and blur are right"; con write-combined, la relectura va a ~70 MB/s (5 fps), y con mapeos cacheados más mantenimiento en el kernel (0988, `vincecache=1`) a ~18 fps. Además: filas de 128 bytes para la superficie por defecto en modo in-place (0993, `bd77810`), un boot-arg para el divisor del reloj GFX3D y volcados de registros del MDP (scanout directo, en curso).
   - Cambios: el interceptor de `vince_inject.c` **sustituye** el campo de caché (antes hacía OR: `0x400 | 0x300` daba otro modo); `redwood_drm` elige copyback automáticamente con `vincecache=1`; `backboardd-wrap` envía stdout/stderr a la consola con `bbdlog=1`, para ver los logs `topaz-gl:`/`redwood-gl:`.
 - Recompilados Mesa (run 42903161632) y vincegl (run 42903167596) con esos cambios. Imágenes: `vince-boot-gldiag.img` (GPU, `vincecache=1`, `bbdlog=1`, consola visible) y `vince-boot-glcache.img` (GPU, `vincecache=1`, consola silenciosa, 30 Hz).
+- **`vince-boot-glcache.img` (GPU + `vincecache=1`)**: el usuario nota la interfaz **más fluida**. Los mapeos copyback, con mantenimiento de caché en el kernel, abaratan la relectura de cada fotograma, como en rebivincek. Pendiente: `vince-boot-gldiag.img` para diagnosticar los desenfoques.
