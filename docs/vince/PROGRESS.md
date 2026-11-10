@@ -7,7 +7,7 @@
 | CI del kernel en verde (este fork) | ✅ | Run 42761468387, macos-15 + Xcode 16.0, 9m35s, `kernel.development.vince` de 17 MB |
 | Auditoría DTS stock ↔ parches | ✅ | `tools/audit_vince_hw.py`: solo falta el watchdog, que LK deja apagado |
 | Shim + texto en pantalla | ✅ | MMU 4K, GICv2 y timer virtual OK en el teléfono |
-| XNU 1 núcleo (GICv2 + timer) | 🟡 arranca | XNU imprime su consola; bucle en IODTMapOneInterrupt (arreglo pendiente de probar) |
+| XNU 1 núcleo (GICv2 + timer) | ✅ | Kernel completo hasta `Waiting on ... Apple_HFS` (sin root) |
 | Root en eMMC → launchd | ⏳ | |
 | Emulación LSE/LDAPR | ❌ falta | Upstream no la tiene; candidato: portar topaz 0081 |
 | SMP 8 núcleos | ⏳ | |
@@ -72,3 +72,11 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
 - **Segundo salto a XNU** (`vince-boot-xnu.img` `33aeb896…`, con la comprobación de RAM): **XNU arranca y escribe en pantalla**, pero entra en un bucle infinito imprimiendo `unexpected .../iokit/Kernel/IODeviceTreeSupport.cpp:579`. La comprobación de RAM pasó (si no, el shim no habría saltado). No se sabe por qué el primer intento reinició y este no; si vuelve a pasar, usar la imagen de diagnóstico para leer `PREV XNU`.
   - Causa: en el ADT, `sdhci` y `touchscreen` tenían `interrupts` sin `interrupt-parent`. `IODTFindInterruptParent` usa entonces `arm-io`, que no es controlador ni tiene `interrupt-map`; `IODTGetICellCounts` avisa de que falta `#interrupt-cells` (línea 579) y el `do { … } while (parent)` de `IODTMapOneInterrupt` repite `regEntry = parent` con el mismo `arm-io` para siempre.
   - Arreglo: quitar `interrupts` de esos dos nodos en `tools/mkadt_vince.py`; ningún driver vince los usa (eMMC por PIO sin interrupciones, touch por sondeo). Nueva imagen `vince-boot-xnu.img` `470dafb5…`.
+- **Tercer salto a XNU** (`470dafb5…`): **el kernel arranca completo** y se detiene en `Waiting on <dict>IOProviderClass=IOMedia, Content=Apple_HFS</dict>`. Es lo esperado: el cmdline no tiene `rd=` y `userdata` no tiene raíz iOS. En el log aparecen:
+  - `VINCE RTC: no valid stored offset` (arranca con la hora del build).
+  - AMFI y Sandbox de sweet cargados como políticas permisivas; `SWEET HFS: hfs-627.100.6 registered`.
+  - mbinit 64 MB; self-tests de DLIL/Skywalk PASSED; `lo0`, `gif0` y `stf0` creados.
+  - `SWEET FB: AppleCLCD 1080x2160 stride 4500 at 0x90001000 ... presented as 1125x2436`, escalado a 1080x2160 con x=40.
+  - `SWEET CPU: 1 CPUs, ... MHz 1401`.
+  - `SWEET BATTERY: PM6150 / estimated SOC 15%, 3435mV, external=1` (la etiqueta PM6150 viene de sweet, pero la lectura es plausible).
+- Siguiente etapa: imagen raíz iOS en `userdata` y arranque con `rd=mmcroot0 mmcroot=userdata`.
