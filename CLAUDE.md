@@ -19,7 +19,7 @@ Reglas:
 - XNU solo se compila en CI (`.github/workflows/xnu-vince.yml`); los parches viven en `xnu/patches/NNNN-*.patch`,
   numerados y aplicados en orden.
 - Arrancar siempre con `fastboot boot`, nunca flashear `boot`.
-- Rama de trabajo: `vince-port` (parte de `c3c7b7f`, último build verde de upstream). CI manual: `gh workflow run xnu-vince --ref vince-port`.
+- Rama de trabajo: `vince-port` (parte de `c3c7b7f`, último build verde de upstream). CI: `tools/ci-run.sh [xnu-vince|mesa|vincegl]` (arm64 y, si no hay runner en 60 s, Intel).
 - Remotos: `origin` = cjxyz/ios-vince, `upstream` = arabaci0711-ux/ios-vince.
 
 ## Commits
