@@ -21,7 +21,8 @@ Reglas:
 - Remotos: `origin` = cjxyz/ios-vince, `upstream` = arabaci0711-ux/ios-vince.
 
 ## Commits
-Identidad: `cjxyz <cjxyz776@gmail.com>` (git config local del repo), push con la cuenta gh `cjxyz`.
+Identidad: `cjxyz <cjxyz776@gmail.com>` (git config local del repo). El push usa siempre la cuenta gh `cjxyz` gracias a un
+credential helper local (`gh auth token --user cjxyz`), aunque la cuenta activa de gh sea otra; no cambiar la cuenta activa.
 Mensajes **en inglés**, con esta estructura:
 ```
 type(scope): imperative summary
