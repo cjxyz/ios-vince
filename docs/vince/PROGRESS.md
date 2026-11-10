@@ -13,6 +13,7 @@
 | SMP 8 núcleos | ✅ 7 de 8 | `cpus=7` arranca y va más fluido; falta CPU1 |
 | SpringBoard / lock screen | ✅ | **Pantalla de bloqueo de iOS 16.7.16 en el Redmi 5 Plus** (2026-11-10) |
 | Touch TD4310 + teclas | ✅ | Touch y botones power/volumen funcionan |
+| Retroiluminación (WLED) | ✅ | 0182: se apaga al bloquear |
 | USB ECM / log por red | ⏳ | |
 | Wi‑Fi / BT | ⏳ | parches 0119–0179 de upstream |
 | GPU Adreno 506 | ⏳ | 0181 de upstream; ios-casuarina como referencia |
@@ -109,3 +110,4 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
 - Botones: **power y volumen funcionan**. Al bloquear, la pantalla queda negra pero con la retroiluminación encendida: `SweetFramebuffer` solo funde a negro (pensado para el AMOLED de sweet) y en el LCD del vince la luz la da la WLED del PMI8950 (SID 3, `0xd800`).
 - **Parche 0182 `vince-wled-backlight`**: `vince_pmic_write()` (escritura SPMI genérica por el canal propio de las aplicaciones, con la misma comprobación EE 0 que la escritura del RTC y canales cacheados) y `vince_wled_set()`, que cambia solo el bit 7 de `MODULE_EN` (`0xd846`), como `qpnp_wled_module_en()` en Linux. `SweetFramebuffer` lo llama en cada `RequestPowerChange`. Aplica limpio sobre el árbol del CI (`patch --dry-run`).
 - CI del 0182: el run en `macos-15` se quedó en cola más de 8 min por falta de capacidad. Nueva entrada `runner` en el workflow; relanzado con `-f runner=macos-15-intel` (run 42844953204): empezó al instante y quedó **verde en 13 min**, 0182 aplicado, los mismos 45 parches saltados. El kernel contiene `VINCE WLED` y sigue sin LSE/PAC (solo el `ldumaxah` de los datos de `K256`). Nueva `vince-boot-smp.img` (`819a024c…`, `cpus=7`).
+- **0182 probado en el teléfono** (`vince-boot-smp.img` `819a024c…`): al bloquear con power, la pantalla queda negra y **sin retroiluminación**. La escritura SPMI por el canal de las aplicaciones funciona: la WLED del PMI8950 (PPID 0x3d8) pertenece a EE 0.
