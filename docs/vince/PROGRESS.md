@@ -8,7 +8,7 @@
 | Auditoría DTS stock ↔ parches | ✅ | `tools/audit_vince_hw.py`: solo falta el watchdog, que LK deja apagado |
 | Shim + texto en pantalla | ✅ | MMU 4K, GICv2 y timer virtual OK en el teléfono |
 | XNU 1 núcleo (GICv2 + timer) | ✅ | Kernel completo hasta `Waiting on ... Apple_HFS` (sin root) |
-| Root en eMMC → launchd | ⏳ | |
+| Root en eMMC → launchd | 🧪 listo para probar | `ios16-root.simg` + `vince-boot-root.img` |
 | Emulación LSE/LDAPR | ❌ falta | Upstream no la tiene; candidato: portar topaz 0081 |
 | SMP 8 núcleos | ⏳ | |
 | SpringBoard / lock screen | ⏳ | |
@@ -86,3 +86,7 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
 - **Bloqueo**: el kernel WSL2 6.18.54.1 no tiene HFS+, así que `mkiosroot.sh` no puede montar la imagen. Nuevo `tools/wsl-hfsplus.sh`: compila `hfsplus.ko` desde la etiqueta `linux-msft-wsl-6.18.54.1` de Microsoft y lo carga con `insmod` (MODVERSIONS sin `Module.symvers`; plan B: compilar `vmlinux`).
 - IPSW descargado y verificado (SHA256 `ece1194f…` OK). Imágenes extraídas a `../rootwork`: OS `087-86698-044.dmg`, SystemOS `087-86593-047.dmg` y AppOS `087-86715-047.dmg`.
 - **`hfsplus.ko` cargado en WSL2** al tercer intento. (1) Sin `pahole`, `olddefconfig` quitaba `DEBUG_INFO_BTF_MODULES` y `struct module` medía `0x4c0` en vez de `0x500` (comparado con `zsmalloc.ko` de Microsoft y con `pahole -C module /sys/kernel/btf/vmlinux`). (2) Ya con BTF, los `.o` del primer intento solo se volvían a enlazar; ahora el script hace `make M=fs/hfsplus clean`. Los avisos de modpost por falta de `Module.symvers` son inofensivos.
+- **Imagen raíz construida**: `../rootwork/ios16-root.img` (HFS+ sin journal, sensible a mayúsculas, 16 GB, 12 GB usados) y `ios16-root.simg` (12 145 443 072 B). `fsck.hfsplus -n`: "The volume iOSRoot appears to be OK".
+  - `mkiosroot.sh` falló tras copiar con `install: invalid user: '272'` (uutils coreutils de Ubuntu 26.04). Se corrigió el script y se reanudó a mano (logd + keybag) sin repetir la copia; `mkroot_vince.sh` se salta `mkiosroot.sh` si la imagen ya existe.
+  - `sweet-root-tweaks.py`: 7 `_PanicOnCrash` renombrados, 2 jobs de CommCenter quitados, containers creados, VirtualAudio desactivado, StartRecorderServer off (D22, D221, Default), Setup saltado. Aviso: "no mobileactivationd system container in the image; skipped data ark". Según sweet, el estado activado sale de las propiedades `/chosen` de seguridad del ADT, que `mkadt_vince.py` define.
+- Siguiente paso: `fastboot -S 512M flash userdata ios16-root.simg` y arrancar `vince-boot-root.img`.
