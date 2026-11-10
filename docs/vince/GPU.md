@@ -70,7 +70,20 @@ declaraciones (`kvtophys` sin declarar, `pmap_paddr_t` desconocido), no por el d
    - ✅ 2026-11-10: `gputest` 2/2 en el teléfono (clear y triángulo con shader en la GPU). Falló primero con SIGBUS BUS_ADRALN:
      `IOUserClient::mapClientMemory64` sustituye el modo de caché del driver por el del cliente, y el pool (PA no gestionada)
      quedaba como memoria de dispositivo. `redwood_drm_map` pide ahora `kIOMapWriteCombineCache`.
-4. **Portar el resto del stack de casuarina** (kernel 0982–0988 + userland Mesa/EAGL/inject) sobre nuestro árbol. Puntos a resolver:
+4. **Fase B, etapa 2: CoreAnimation sobre la GPU** (2026-11-10), de casuarina `userland/gpu` @ `152a3fb` (HackiOS, MIT):
+   - `libvince-gl.dylib` (`eagl.c` + `gl_osmesa.c` + `eagl_gen.h`): EAGLContext/OpenGL ES sobre Mesa. Sustituye seis métodos de
+     `EAGLContext` (`initWithAPI:properties:`, `API`, `setParameter:to:`, `getMacroContextPrivate`, `texImageIOSurface:…`,
+     `attachImage:toCoreSurface:…`) y rellena la tabla de funciones GL con los offsets de iOS 16.7.16 (`eagl_slots.txt`).
+     Sin la petición de superficies (0x7e, fuera de 0183) copia las IOSurfaces con llamadas GL en lugar de compartir su memoria.
+     Diagnóstico por boot-args: `gltrace`, `glframes=1`, `glcensus=1`, etc. (cabecera de `eagl.c`).
+   - `libvince-inject.dylib` (`vince_inject.c`): dentro de `backboardd` espera a `VinceGPU`, carga `libvince-gl`, engancha
+     `GLESContext::function_supported`/`function_uniform` (vtable de la shared cache de 16.7.16, comprobando el valor antes de
+     sustituirlo) e instala handlers de crash (`topaz-crash:` en la consola). **`gl=0` en los boot-args lo desactiva.**
+   - `backboardd-wrap` (`bbd_wrap.c`): `/usr/libexec/backboardd` pasa a ser un envoltorio que añade `DYLD_INSERT_LIBRARIES`
+     y ejecuta el real (`/usr/libexec/real/backboardd`).
+   - Build: `.github/workflows/vincegl.yml` → artefacto `vincegl-ios`. Instalación: `tools/addgpu_root.sh ROOT.img MESA_DIR GL_DIR`
+     (`--no-gl` restaura el `backboardd` original).
+5. **Portar el resto del stack de casuarina** (kernel 0982–0988 + userland Mesa/EAGL/inject) sobre nuestro árbol. Puntos a resolver:
    - encajarlo con nuestro `SweetFramebuffer`/`SweetSurface` (0046);
    - el mapa de RAM: casuarina usa XNU en `0x20000000–0x7fffffff` con el pool arriba; nosotros, XNU en `0xA0000000` y 0181 en `0x47800000`/`0x95000000`;
    - el firmware fuera del árbol si es posible, y Mesa compilado en CI de macOS.
