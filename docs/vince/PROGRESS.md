@@ -17,7 +17,7 @@
 | Rendimiento | 🟡 en curso | Framebuffer a 10 Hz por defecto; CPU a 1,4 GHz (sin CPR); sin GPU |
 | USB ECM / log por red | ⏳ | |
 | Wi‑Fi / BT | ⏳ | parches 0119–0179 de upstream |
-| GPU Adreno 506 | ⏳ | 0181 de upstream; ios-casuarina como referencia |
+| GPU Adreno 506 | 🧪 probando 0181 | Plan en [GPU.md](GPU.md): verificar 0181 y portar el stack Mesa de casuarina |
 
 ## Pendientes conocidos
 1. **CI de HEAD roto en upstream**: decidido partir de `c3c7b7f` (rama `vince-port`). Los commits VinceGPU posteriores (`f2feeae`..`401873c`) quedan fuera por ahora.
@@ -119,3 +119,4 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
   3. CPU1 sin usar (7/8 núcleos).
   4. Sin GPU: CoreAnimation renderiza por CPU.
 - Prueba rápida, solo boot-args: `vince-boot-hz30.img` (`08d957de…`) y `vince-boot-hz60.img` (`73a0580b…`), iguales a smp con `sweetfb_hz=30/60`.
+- **GPU**: investigación en [GPU.md](GPU.md). 0181 (en nuestra base) despierta la A506 hasta ejecutar comandos y cargar el zap, pero está desactivado por defecto (`adreno=N`/`gpu=1`). ios-casuarina (rama `vince`) ya renderiza backboardd con Mesa freedreno sobre ese mismo 0181 (~18 fps). Plan: verificar 0181 en este teléfono y portar su stack. Imagen de prueba `vince-boot-gpu.img` (`6b017329…`, sin raíz, `adreno=11 adreno_pause=2000`).

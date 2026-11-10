@@ -11,6 +11,7 @@ Lee primero:
 - `docs/vince/HARDWARE.md`: direcciones, IRQ y GPIO sacados del kernel stock en `../vince-stock`.
 - `docs/vince/BUILD.md`: cómo compilar (XNU en GitHub Actions, shim/ADT/boot.img en WSL) y arrancar.
 - `docs/vince/PROGRESS.md`: estado, pendientes y bitácora.
+- `docs/vince/GPU.md`: estado y plan de la GPU Adreno 506.
 
 Reglas:
 - Cada cambio de parche o prueba en el teléfono termina con una entrada en `docs/vince/PROGRESS.md` y un commit.
