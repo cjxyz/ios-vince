@@ -66,8 +66,9 @@ fastboot -S 256M flash userdata ../rootwork/ios16-root.simg       # ⚠️ borra
 - LK de vince: `max-download-size` = `0x1fe00000` (510 MiB). Con `-S 512M` algún bloque sparse lo supera (`FAILED (remote: 'data too large')`); usar `-S 256M`.
 - `mkroot_vince.sh` saca del `BuildManifest.plist` las rutas de OS, Cryptex1,SystemOS y Cryptex1,AppOS (identidad D22AP Erase),
   las extrae, llama a `tools/mkiosroot.sh`, monta la imagen, aplica `tools/sweet-root-tweaks.py` y genera la sparse con `img2simg`.
-- `tools/mkiosroot.sh` y `tools/sweet-root-tweaks.py` vienen de ios-sweet @ `45263be`. Único cambio: el HFS+ va **sin journal**,
-  como en upstream vince (0095 permite montar la raíz sucia en escritura tras un reset).
+- `tools/mkiosroot.sh` y `tools/sweet-root-tweaks.py` vienen de ios-sweet @ `45263be`. El HFS+ va **con journal**, como en sweet:
+  sin journal (lo que usaba upstream vince) el volumen se corrompió tras dos resets forzados. El único cambio respecto a sweet es la
+  compatibilidad con uutils (logd/keybag sin `install -o`).
 - Arranque con raíz: `vince-boot-root.img`, payload con este cmdline (los boot-args de userland son los de ios-sweet):
   ```
   debug=0xc serial=3 cpus=1 keepsyms=1 -enable_kprintf_spam -noprogress rd=mmcroot0 mmcroot=userdata mmcrw=1 rootrw=1

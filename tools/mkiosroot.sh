@@ -3,9 +3,11 @@
 # root filesystem plus its cryptexes, for the userdata partition
 # (vince: rd=mmcroot0 mmcroot=userdata; sweet: rd=ufsroot0).
 #
-# Taken from dipa-studio/ios-sweet tools/mkiosroot.sh @ 45263be. vince change:
-# the volume is NOT journaled (no -J), as upstream ios-vince ran it; 0095 lets
-# XNU mount a dirty non-journaled root read-write after a reset.
+# Taken from dipa-studio/ios-sweet tools/mkiosroot.sh @ 45263be. The volume is
+# journaled, as on sweet: every vince test boot ends in a hard reset, and a
+# non-journaled root (what upstream ios-vince ran) got its allocation bitmap
+# corrupted after two such resets ("BlockMarkFreeInternal() trying to free
+# unallocated blocks"); XNU replays the journal at mount instead.
 #
 #   mkiosroot.sh OS.dmg SYSTEMOS.dmg APPOS.dmg OUT.img [SIZE]     (SIZE default 16G)
 #
@@ -15,8 +17,9 @@
 # /System/Cryptexes/{OS,App} link to; here they live inside the one volume.
 # Owners, modes, symlinks and hard links are preserved (rsync -aH as root).
 #
-# sweet journals the volume (XNU replays the journal after a panic); vince does
-# not, see above. SWEET additions: /System/Library/Caches/com.apple.dyld hard-links the SystemOS
+# The volume is journaled (XNU replays the journal after a panic; Linux only
+# mounts it read-write with -o force and leaves the journal empty). SWEET
+# additions: /System/Library/Caches/com.apple.dyld hard-links the SystemOS
 # cryptex shared cache (ignition_level=1 looks there), and
 # /private/var/keybags/systembag.kb is the plain-plist system keybag that
 # keybagd reads with /defaults/no-effaceable-storage (tools/mkadt.py).
@@ -76,7 +79,7 @@ apfs_mount "$sysos" sysos
 apfs_mount "$appos" appos
 
 truncate -s "$size" "$out"
-mkfs.hfsplus -s -v iOSRoot "$out"
+mkfs.hfsplus -s -J -v iOSRoot "$out"
 mkdir "$work/root"
 sudo mount -t hfsplus -o loop,force "$out" "$work/root"
 mounts=("$work/root" "${mounts[@]}")
