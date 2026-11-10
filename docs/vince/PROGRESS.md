@@ -17,7 +17,7 @@
 | Rendimiento | 🟡 en curso | Framebuffer a 10 Hz por defecto; CPU a 1,4 GHz (sin CPR); sin GPU |
 | USB ECM / log por red | ⏳ | |
 | Wi‑Fi / BT | ⏳ | parches 0119–0179 de upstream |
-| GPU Adreno 506 | 🧪 probando 0181 | Plan en [GPU.md](GPU.md): verificar 0181 y portar el stack Mesa de casuarina |
+| GPU Adreno 506 | 🟡 hardware OK | 0181: los 11 pasos SUCCESS en este teléfono; falta la parte de iOS (plan en [GPU.md](GPU.md)) |
 
 ## Pendientes conocidos
 1. **CI de HEAD roto en upstream**: decidido partir de `c3c7b7f` (rama `vince-port`). Los commits VinceGPU posteriores (`f2feeae`..`401873c`) quedan fuera por ahora.
@@ -121,3 +121,11 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
 - Prueba rápida, solo boot-args: `vince-boot-hz30.img` (`08d957de…`) y `vince-boot-hz60.img` (`73a0580b…`), iguales a smp con `sweetfb_hz=30/60`.
 - **GPU**: investigación en [GPU.md](GPU.md). 0181 (en nuestra base) despierta la A506 hasta ejecutar comandos y cargar el zap, pero está desactivado por defecto (`adreno=N`/`gpu=1`). ios-casuarina (rama `vince`) ya renderiza backboardd con Mesa freedreno sobre ese mismo 0181 (~18 fps). Plan: verificar 0181 en este teléfono y portar su stack. Imagen de prueba `vince-boot-gpu.img` (`6b017329…`, sin raíz, `adreno=11 adreno_pause=2000`).
 - Primera prueba de `vince-boot-gpu.img` (`6b017329…`): no aparece ninguna línea `VINCE ADRENO`. `vince_adreno_init()` se llama desde `vince_input_start()`, y esta al final de la inicialización de `vince_mmc`, que solo ocurre con `rd=mmcroot0` o `mmcprobe=1`. Nueva imagen con `mmcprobe=1` (eMMC solo lectura, sin montar raíz).
+- **0181 verificado en el teléfono** (`vince-boot-gpu.img` `9dd990da…`, `mmcprobe=1 adreno=11 adreno_pause=2000`): **los 11 pasos SUCCESS**.
+  - Relojes: `AHB=0x20008001`, `GFX=0x4f01`, `CFG=0x507`.
+  - `restore_sec_cfg(18,0) -> ret=0`; `VBIF_VER=0x200d0000`.
+  - PM4 (19 652 B) y PFP (16 820 B) cargados, ring en PA `0x47800000`, `ME running`, `CP_HW_FAULT=0`.
+  - Paso 9: `CP_MEM_WRITE -> 0xc0ffee01`, RPTR=13.
+  - Paso 10: tabla segura de `0x21000` en `0x47900000`, `mem_setup(0x95000000, 0x2000)`, `auth_and_reset` correcto, "GPU out of secure mode".
+  - Paso 11: `CP_MEM_WRITE -> 0xc0ffee02`, RPTR=19, "Adreno 506 command processor is up (ring at PA 0x47820000)".
+  - Después, el touch se inicializa con normalidad (RMI4 F12, 4 dedos).

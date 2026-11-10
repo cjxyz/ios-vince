@@ -44,6 +44,7 @@ declaraciones (`kvtophys` sin declarar, `pmap_paddr_t` desconocido), no por el d
 
 ## Plan
 1. **Verificar 0181 en nuestro teléfono**: `vince-boot-gpu.img` (sin raíz, `mmcprobe=1 adreno=11 adreno_pause=2000`) y ver hasta qué paso llega.
+   ✅ 2026-11-10: los 11 pasos SUCCESS en este teléfono (detalle en PROGRESS.md).
    Ojo: `vince_adreno_init()` solo se ejecuta tras inicializar `vince_mmc` (`rd=mmcroot0` o `mmcprobe=1`), porque la llama `vince_input_start()`.
 2. **Portar el stack de casuarina** (kernel 0982–0988 + userland Mesa/EAGL/inject) sobre nuestro árbol. Puntos a resolver:
    - encajarlo con nuestro `SweetFramebuffer`/`SweetSurface` (0046);
