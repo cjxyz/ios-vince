@@ -7,7 +7,7 @@
 | CI del kernel en verde (este fork) | ✅ | Run 42761468387, macos-15 + Xcode 16.0, 9m35s, `kernel.development.vince` de 17 MB |
 | Auditoría DTS stock ↔ parches | ✅ | `tools/audit_vince_hw.py`: solo falta el watchdog, que LK deja apagado |
 | Shim + texto en pantalla | ✅ | MMU 4K, GICv2 y timer virtual OK en el teléfono |
-| XNU 1 núcleo (GICv2 + timer) | 🔴 reinicia | El shim salta a XNU y el teléfono reinicia a Android sin salida de XNU |
+| XNU 1 núcleo (GICv2 + timer) | 🟡 arranca | XNU imprime su consola; bucle en IODTMapOneInterrupt (arreglo pendiente de probar) |
 | Root en eMMC → launchd | ⏳ | |
 | Emulación LSE/LDAPR | ❌ falta | Upstream no la tiene; candidato: portar topaz 0081 |
 | SMP 8 núcleos | ⏳ | |
@@ -69,3 +69,6 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
   - Descubierto en `0113-vince-shim-halt`: el shim real de upstream tenía un monitor USB en CPU1 y compartía con XNU la página `0x913F0000` (marcas SMP y palabra HALT). El shim del repo es una versión reducida sin eso.
   - Hipótesis principal: la ventana de RAM de XNU (`0xA0000000` + `0x57F00000`) se calculó con el `/proc/iomem` de un teléfono de 4 GB. Si esta unidad tiene otra RAM o otro mapa, XNU toca memoria inexistente o protegida y Qualcomm reinicia.
   - Nuevos diagnósticos en el shim: (1) `PREV XNU`/`PREV REG` muestran las marcas que deja `start.s` en `0x913F0800`/`0x913F0C00` (0x13 = `start_first_cpu`, 0x14 = antes de activar la MMU) y luego las borra; (2) `DRAM` lista el nodo `/memory` que rellena LK; (3) el loader no salta si la ventana de XNU no está dentro de la DRAM. Imágenes nuevas: `vince-boot-xnu.img` `33aeb896…` y `vince-boot-diag.img`.
+- **Segundo salto a XNU** (`vince-boot-xnu.img` `33aeb896…`, con la comprobación de RAM): **XNU arranca y escribe en pantalla**, pero entra en un bucle infinito imprimiendo `unexpected .../iokit/Kernel/IODeviceTreeSupport.cpp:579`. La comprobación de RAM pasó (si no, el shim no habría saltado). No se sabe por qué el primer intento reinició y este no; si vuelve a pasar, usar la imagen de diagnóstico para leer `PREV XNU`.
+  - Causa: en el ADT, `sdhci` y `touchscreen` tenían `interrupts` sin `interrupt-parent`. `IODTFindInterruptParent` usa entonces `arm-io`, que no es controlador ni tiene `interrupt-map`; `IODTGetICellCounts` avisa de que falta `#interrupt-cells` (línea 579) y el `do { … } while (parent)` de `IODTMapOneInterrupt` repite `regEntry = parent` con el mismo `arm-io` para siempre.
+  - Arreglo: quitar `interrupts` de esos dos nodos en `tools/mkadt_vince.py`; ningún driver vince los usa (eMMC por PIO sin interrupciones, touch por sondeo). Nueva imagen `vince-boot-xnu.img` `470dafb5…`.

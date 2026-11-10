@@ -139,12 +139,15 @@ def build_vince_adt(seed=None):
         ('canvas-height', u32(2436)),
     ])
 
+    # No 'interrupts' on sdhci / touchscreen: both drivers poll (vince_mmc is PIO without interrupts, vince_input
+    # polls the RMI4 attention line), and with no interrupt-parent IODTMapOneInterrupt falls back to arm-io, which is
+    # neither a controller nor has an interrupt-map, and spins forever printing "unexpected IODeviceTreeSupport.cpp:579".
+
     # SDHCI eMMC Storage Node
     sdhci_node = node('sdhci', [
         ph(),
         ('compatible', cstr('generic-sdhci') + cstr('qcom,sdhci-msm-v4') + b'\0'),
         ('reg', u64(SDHCI, SDHCI_SIZE)),
-        ('interrupts', u32(0, 123, 4)),  # SPI 123
     ])
 
     # Synaptics RMI4 Touchscreen Node
@@ -153,7 +156,6 @@ def build_vince_adt(seed=None):
         ('compatible', cstr('synaptics,rmi4') + b'\0'),
         ('i2c-address', u32(0x20)),
         ('i2c-bus', u32(3)),
-        ('interrupts', u32(0, 65, 2)),  # GPIO 65
     ])
 
     # No Wi-Fi or Bluetooth driver: MobileGestalt's WifiAddress/BluetoothAddress (for the A11-style UniqueDeviceID)
