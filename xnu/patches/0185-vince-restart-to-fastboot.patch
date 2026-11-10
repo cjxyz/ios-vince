@@ -1,0 +1,78 @@
+diff --git a/bsd/dev/vince_pmic.c b/bsd/dev/vince_pmic.c
+index 83f02e6..f590f2e 100644
+--- a/bsd/dev/vince_pmic.c
++++ b/bsd/dev/vince_pmic.c
+@@ -9,6 +9,8 @@
+ #include <sys/systm.h>
+ #include <kern/clock.h>
+ #include <machine/machine_routines.h>
++#include <pexpert/pexpert.h>
++#include <IOKit/IOPlatformExpert.h>
+ 
+ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
+ 
+@@ -28,6 +30,8 @@ static struct {
+ static unsigned pmic_nchan;
+ static lck_grp_t *pmic_grp;
+ static lck_mtx_t *pmic_lock;
++static int vince_halt_restart(unsigned int type);
++__attribute__((noreturn)) void vince_reboot_bootloader(void);
+ 
+ int
+ vince_pmic_init(void)
+@@ -42,6 +46,10 @@ vince_pmic_init(void)
+ 	}
+ 	pmic_grp = lck_grp_alloc_init("vince_pmic", LCK_GRP_ATTR_NULL);
+ 	pmic_lock = lck_mtx_alloc_init(pmic_grp, LCK_ATTR_NULL);
++	/* nothing else sets it on this board: without it XNU cannot restart, and whatever resets the phone later boots Android */
++	if (PE_halt_restart == NULL) {
++		PE_halt_restart = vince_halt_restart;
++	}
+ 	return 0;
+ }
+ 
+@@ -348,7 +356,7 @@ pon_masked_write(unsigned reg, uint8_t mask, uint8_t val)
+ 	return vince_pmic_write(PON_PPID, reg, (uint8_t)((cur & ~mask) | (val & mask)));
+ }
+ 
+-void
++__attribute__((noreturn)) void
+ vince_reboot_bootloader(void)
+ {
+ 	uint8_t subtype = 0, rev2 = 0;
+@@ -392,4 +400,35 @@ vince_reboot_bootloader(void)
+ 		__asm__ volatile ("wfi");
+ 	}
+ }
++
++/*
++ * PE_halt_restart for this board. XNU's restarts and its panic restart go to fastboot, not back into Android: userdata
++ * holds the iOS root, so Android would hang there and leaving it needs the power button. After a panic the screen is
++ * kept for vincepanicwait seconds (default 20) so the panic text can be read or photographed. Halt goes to fastboot too
++ * (there is no power-off path here yet).
++ */
++static int
++vince_halt_restart(unsigned int type)
++{
++	switch (type) {
++	case kPEPanicRestartCPU: {
++		uint32_t wait_s = 20;
++
++		(void)PE_parse_boot_argn("vincepanicwait", &wait_s, sizeof(wait_s));
++		printf("VINCE: rebooting into fastboot in %u s\n", wait_s);
++		delay((int)(wait_s > 600 ? 600 : wait_s) * 1000000);
++		vince_reboot_bootloader();
++	}
++	case kPERestartCPU:
++	case kPEHaltCPU:
++	case kPEUPSDelayHaltCPU:
++		vince_reboot_bootloader();
++	case kPEHangCPU:
++		for (;;) {
++			__asm__ volatile ("wfi");
++		}
++	default:
++		return 0;               /* panic sync/begin/end, paging off: nothing to do */
++	}
++}
+ #endif /* ARM64_BOARD_CONFIG_VINCE */
