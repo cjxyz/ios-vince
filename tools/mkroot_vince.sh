@@ -26,7 +26,7 @@ done
 # Component paths from the first iPhone10,3 (D22AP) erase identity.
 read -r os sysos appos < <(unzip -p "$ipsw" BuildManifest.plist | python3 -c '
 import plistlib, sys
-m = plistlib.load(sys.stdin.buffer)
+m = plistlib.loads(sys.stdin.buffer.read())
 for b in m["BuildIdentities"]:
     if b["Info"].get("DeviceClass", "").lower() == "d22ap" and "Erase" in b["Info"].get("Variant", ""):
         man = b["Manifest"]
