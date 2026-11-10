@@ -4,7 +4,8 @@ Port de iOS 16 (XNU-8796 + userland del iPhone X) al Xiaomi Redmi 5 Plus "vince"
 Fork de arabaci0711-ux/ios-vince, que a su vez deriva de dipa-studio/ios-sweet.
 
 Estado (2026-11-10): iOS 16.7.16 llega a la pantalla de bloqueo con 7 núcleos y touch (`artifacts/vince-boot-smp.img`,
-raíz HFS+ con journal en `userdata`). Detalle en `docs/vince/PROGRESS.md`.
+raíz HFS+ con journal en `userdata`). La GPU Adreno 506 dibuja desde iOS con Mesa freedreno (`gputest` 2/2); falta
+conectarla a CoreAnimation (`docs/vince/GPU.md`). Detalle en `docs/vince/PROGRESS.md`.
 
 Lee primero:
 - `docs/vince/CONTEXT.md`: objetivo, linaje, decisiones y referencias.

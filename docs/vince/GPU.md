@@ -67,6 +67,9 @@ declaraciones (`kvtophys` sin declarar, `pmap_paddr_t` desconocido), no por el d
    - `tools/addgpu_root.sh ROOT.img MESA_DIR`: copia las dos piezas a `/vince/{lib,bin}`, añade el job `com.vince.gputest`
      (una vez, salida a `/dev/console`) a `/System/Library/xpc/launchd.plist` y regenera la `.simg`.
    - Arranque de prueba: iOS con `gpu=1` y sin `sweetfb_noconsole`, para ver la salida de `gputest` en pantalla.
+   - ✅ 2026-11-10: `gputest` 2/2 en el teléfono (clear y triángulo con shader en la GPU). Falló primero con SIGBUS BUS_ADRALN:
+     `IOUserClient::mapClientMemory64` sustituye el modo de caché del driver por el del cliente, y el pool (PA no gestionada)
+     quedaba como memoria de dispositivo. `redwood_drm_map` pide ahora `kIOMapWriteCombineCache`.
 4. **Portar el resto del stack de casuarina** (kernel 0982–0988 + userland Mesa/EAGL/inject) sobre nuestro árbol. Puntos a resolver:
    - encajarlo con nuestro `SweetFramebuffer`/`SweetSurface` (0046);
    - el mapa de RAM: casuarina usa XNU en `0x20000000–0x7fffffff` con el pool arriba; nosotros, XNU en `0xA0000000` y 0181 en `0x47800000`/`0x95000000`;

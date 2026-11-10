@@ -18,7 +18,7 @@
 | Reinicio a fastboot | ✅ | 0184: volumen + y − 3 s; 0185: panics y reinicios van a fastboot |
 | USB ECM / log por red | ⏳ | |
 | Wi‑Fi / BT | ⏳ | parches 0119–0179 de upstream |
-| GPU Adreno 506 | 🟡 fase A ✅ | Servicio `VinceGPU` con self-test 4/4; falta userland, fase B (plan en [GPU.md](GPU.md)) |
+| GPU Adreno 506 | 🟡 fase B etapa 1 ✅ | **Mesa freedreno dibuja desde iOS** (`gputest` 2/2); falta CoreAnimation, etapa 2 (plan en [GPU.md](GPU.md)) |
 
 ## Pendientes conocidos
 1. **CI de HEAD roto en upstream**: decidido partir de `c3c7b7f` (rama `vince-port`). Los commits VinceGPU posteriores (`f2feeae`..`401873c`) quedan fuera por ahora.
@@ -158,3 +158,4 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
 - **Tercera prueba de `gputest`** (resumen e informe de fallo, `vincecache=1`): renderer FD506, OpenGL ES 3.1, y en el `clear` → `FAIL: signal 10 code 1 at 0x100dbe034`, `esr 0x92000061` (abort de datos desde EL0, escritura, DFSC `0x21` = **alignment fault**; `code 1` = `BUS_ADRALN`).
   - Causa: `IOUserClient::mapClientMemory64` hace `options = (options & ~kIOMapUserOptionsMask) | (mapFlags & kIOMapUserOptionsMask)`, y `kIOMapUserOptionsMask` (`0xfff`) incluye `kIOMapCacheMask` (`0xf00`). El modo de caché que elige `VinceGPU::clientMemoryForType` se sustituye por el del cliente (`redwood_drm` pedía solo `kIOMapAnywhere`, es decir, caché por defecto). Para PA no gestionadas el pmap usa entonces `VM_WIMG_IO` (`pmap_cache_attributes`), memoria de dispositivo, donde los accesos no alineados de Mesa fallan. Por eso `vincecache=1` no cambiaba nada. `mapClientMemory64` no es virtual: el arreglo va en el userland.
   - Arreglo: `redwood_drm_map` mapea con `kIOMapWriteCombineCache` (como Linux con freedreno); `REDWOOD_DRM_CACHE=copyback` usa `kIOMapCopybackCache` para el modo `vincecache=1`.
+- 🎉 **PRIMER DIBUJO CON LA GPU DESDE iOS** (`redwood_drm` con `kIOMapWriteCombineCache`, `vince-boot-gpuios.img`): `gputest` → `vendor freedreno`, `renderer FD506`, `OpenGL ES 3.1 Mesa 25.0.7`, `clear: pixel 255 0 0 255` **clear PASS**, `triangle: pixel 0 255 0 255, GL error 0` **triangle PASS**, **`PASS: 2 of 2 drawing checks on the GPU`**. Funciona toda la cadena: Mesa freedreno → redwood-drm → IOUserClient VinceGPU → ring → Adreno 506. **Fase B, etapa 1 completada.**
