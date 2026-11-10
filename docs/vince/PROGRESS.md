@@ -6,8 +6,8 @@
 | Fork y documentación | ✅ | 2026-11-10 |
 | CI del kernel en verde (este fork) | ✅ | Run 42761468387, macos-15 + Xcode 16.0, 9m35s, `kernel.development.vince` de 17 MB |
 | Auditoría DTS stock ↔ parches | ✅ | `tools/audit_vince_hw.py`: solo falta el watchdog, que LK deja apagado |
-| Shim + texto en pantalla | 🟡 parcial | LK acepta la imagen y el shim pinta la pantalla; se colgaba al activar la MMU (arreglo pendiente de probar) |
-| XNU 1 núcleo (GICv2 + timer) | ⏳ | |
+| Shim + texto en pantalla | ✅ | MMU 4K, GICv2 y timer virtual OK en el teléfono |
+| XNU 1 núcleo (GICv2 + timer) | 🧪 listo para probar | `artifacts/vince-boot-xnu.img` |
 | Root en eMMC → launchd | ⏳ | |
 | Emulación LSE/LDAPR | ❌ falta | Upstream no la tiene; candidato: portar topaz 0081 |
 | SMP 8 núcleos | ⏳ | |
@@ -63,3 +63,5 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
   - **Se detiene antes de la línea MMU.** Causa probable: LK ignora las direcciones de la cabecera (`0x80008000`) y carga el shim cerca de `0x10080000`, con el DTB en `0x13400000` (y, según ios-casuarina, el ramdisk en `0x13600000`). `shim/mmu.c` mapeaba todo el GB 0 como Device + PXN, así que tras activar la MMU la siguiente instrucción (y los vectores) abortan en bucle, sin llegar al panic rojo.
   - Arreglo: `map_normal()` remapea como WB ejecutable los bloques de 2 MB del shim, del DTB (`totalsize`) y del initrd de `/chosen`. El shim muestra además `IMAGE` (dirección real de `_head`, calculada con `adr`). Nueva imagen: `vince-boot-diag.img`, SHA256 `b45d8cf9…`.
   - **Watchdog: LK no lo deja activo.** Con el shim colgado, la pantalla siguió fija sin reinicio (el bark está a 11 s y nadie lo atendía).
+- **Segunda prueba (`b45d8cf9…`): diagnóstico completo.** `IMAGE 0x10080000` confirma la dirección de carga de LK; `MMU`, `GIC` y `TIMER` OK; `LOADER: no initrd in /chosen` (esperado, sin ramdisk) y `READY Shim diagnostics PASS! Halting.`
+- Siguiente imagen: `artifacts/vince-boot-xnu.img` (17 686 528 B, SHA256 `53701240…`) = shim + DTB stock + payload (kernel del CI + ADT). Cmdline por defecto de `mkpayload_vince.py`: `debug=0xc serial=3 cpus=1 keepsyms=1 -enable_kprintf_spam -noprogress wdt=-1 wdt_test=no_user_checkin sweettouch=0 sweetkeys=0`. No hay root, así que lo esperado en el mejor caso es el log de XNU en pantalla hasta esperar al dispositivo raíz.
