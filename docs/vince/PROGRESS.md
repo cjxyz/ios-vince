@@ -17,7 +17,7 @@
 | Rendimiento | 🟡 en curso | Framebuffer a 10 Hz por defecto; CPU a 1,4 GHz (sin CPR); sin GPU |
 | USB ECM / log por red | ⏳ | |
 | Wi‑Fi / BT | ⏳ | parches 0119–0179 de upstream |
-| GPU Adreno 506 | 🟡 hardware OK | 0181: los 11 pasos SUCCESS en este teléfono; falta la parte de iOS (plan en [GPU.md](GPU.md)) |
+| GPU Adreno 506 | 🟡 fase A OK | Servicio `VinceGPU` registrado; self-test 3/4 (falla el primer envío); falta userland (plan en [GPU.md](GPU.md)) |
 
 ## Pendientes conocidos
 1. **CI de HEAD roto en upstream**: decidido partir de `c3c7b7f` (rama `vince-port`). Los commits VinceGPU posteriores (`f2feeae`..`401873c`) quedan fuera por ahora.
@@ -139,3 +139,7 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
 - Build combinado (run 42858968219, `0237930`): **verde**, 0182–0185 aplicados, los mismos 45 saltados. El kernel contiene `VinceGPU`, el self-test y "rebooting into fastboot". Imágenes con el ADT nuevo (RAM de XNU hasta `0xec000000`):
   - `vince-boot-gputest.img` (`741a127b…`): sin raíz, `mmcprobe=1 gpu=1 adreno_test=1`.
   - `vince-boot-smp.img` (`7dab601f…`): iOS, 7 núcleos, `sweetfb_hz=30`, con 0184/0185.
+- **Self-test de VinceGPU** (`vince-boot-gputest.img` `741a127b…`): los 11 pasos SUCCESS (y en el paso 10 aparece `PIL_INIT_IMAGE(13) resumed 1 times`), luego `VinceGPU: service started and registered`, `GPU_ID 506`, buffer de comandos en PA `0xa5221000` y de datos en `0xa5222000`.
+  - 1 FAIL (`fence 1, d[0] 0, d[1] 0`).
+  - 2 PASS (16 palabras), 3 PASS (dos IB en un envío), 4 PASS (100 envíos, último fence 103): **el ring da la vuelta** y los fences avanzan.
+  - Pendiente con la prueba 1: `d[1]` debería seguir siendo el `0x11111111` que escribe la CPU antes del envío, así que no basta con "la GPU no escribió". Sospechas: el primer fence se da por cumplido antes de tiempo (el valor inicial de scratch+0x20) o un problema de visibilidad o caché en el primer uso del buffer. Hay que resolverlo antes de conectar Mesa.
