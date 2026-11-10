@@ -15,6 +15,7 @@
  */
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/ucontext.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -116,9 +117,17 @@ finish(int code)
 }
 
 static void
-fatal(int signal)
+fatal(int signal, siginfo_t *info, void *context)
 {
-	say("FAIL: signal %d during step \"%s\"", signal, step);
+	ucontext_t *uc = context;
+
+	/* si_code for SIGBUS: 1 BUS_ADRALN (alignment), 2 BUS_ADRERR, 3 BUS_OBJERR (the memory object failed) */
+	say("FAIL: signal %d code %d at %p during step \"%s\"", signal, info->si_code, info->si_addr, step);
+	if (uc != NULL && uc->uc_mcontext != NULL) {
+		say("pc %#llx lr %#llx far %#llx esr %#x", (unsigned long long)uc->uc_mcontext->__ss.__pc,
+		    (unsigned long long)uc->uc_mcontext->__ss.__lr, (unsigned long long)uc->uc_mcontext->__es.__far,
+		    uc->uc_mcontext->__es.__esr);
+	}
 	finish(4);
 }
 
@@ -206,11 +215,16 @@ main(void)
 	char log[512] = "";
 
 	console = open("/dev/console", O_WRONLY | O_NOCTTY);
-	signal(SIGSEGV, fatal);
-	signal(SIGBUS, fatal);
-	signal(SIGILL, fatal);
-	signal(SIGABRT, fatal);
-	signal(SIGFPE, fatal);
+	struct sigaction sa;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_sigaction = fatal;
+	sa.sa_flags = SA_SIGINFO;
+	sigaction(SIGSEGV, &sa, NULL);
+	sigaction(SIGBUS, &sa, NULL);
+	sigaction(SIGILL, &sa, NULL);
+	sigaction(SIGABRT, &sa, NULL);
+	sigaction(SIGFPE, &sa, NULL);
 	say("start");
 	for (int waited = 0;; waited++) {
 		io_service_t gpu = IOServiceGetMatchingService(0, IOServiceMatching("VinceGPU"));
