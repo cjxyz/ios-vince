@@ -5,7 +5,7 @@
 |---|---|---|
 | Fork y documentación | ✅ | 2026-11-10 |
 | CI del kernel en verde (este fork) | ✅ | Run 42761468387, macos-15 + Xcode 16.0, 9m35s, `kernel.development.vince` de 17 MB |
-| Auditoría DTS stock ↔ parches | ✅ | `tools/audit_vince_hw.py`: solo falta el watchdog |
+| Auditoría DTS stock ↔ parches | ✅ | `tools/audit_vince_hw.py`: solo falta el watchdog, que LK deja apagado |
 | Shim + texto en pantalla | 🟡 parcial | LK acepta la imagen y el shim pinta la pantalla; se colgaba al activar la MMU (arreglo pendiente de probar) |
 | XNU 1 núcleo (GICv2 + timer) | ⏳ | |
 | Root en eMMC → launchd | ⏳ | |
@@ -20,7 +20,7 @@
 ## Pendientes conocidos
 1. **CI de HEAD roto en upstream**: decidido partir de `c3c7b7f` (rama `vince-port`). Los commits VinceGPU posteriores (`f2feeae`..`401873c`) quedan fuera por ahora.
 2. **LSE/LDAPR/CAS**: no hay emulación en `xnu/patches` (no aparecen `handle_uncategorized`, `ldadd` ni `casal`).
-3. **Watchdog `0xB017000`**: el shim no lo desactiva; solo `tools/mkadt_vince.py` crea un nodo ADT `no-pmu`.
+3. ~~Watchdog `0xB017000`~~: LK lo deja desactivado (comprobado en el teléfono el 2026-11-10). No hace falta tocarlo en el shim.
 4. ~~Rutas rotas en `shim/build.py` y las tools~~: corregidas el 2026-11-10.
 5. **Falta tooling de la imagen raíz** (`mkiosroot.sh`).
 6. **Alimentación del touch**: comprobar si LK deja L10/L6 encendidos.
@@ -62,4 +62,4 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
   - El framebuffer de splash funciona: fondo azul y líneas PROJECT, DEVICE, CPU y `FDT 0x0000000013400000`.
   - **Se detiene antes de la línea MMU.** Causa probable: LK ignora las direcciones de la cabecera (`0x80008000`) y carga el shim cerca de `0x10080000`, con el DTB en `0x13400000` (y, según ios-casuarina, el ramdisk en `0x13600000`). `shim/mmu.c` mapeaba todo el GB 0 como Device + PXN, así que tras activar la MMU la siguiente instrucción (y los vectores) abortan en bucle, sin llegar al panic rojo.
   - Arreglo: `map_normal()` remapea como WB ejecutable los bloques de 2 MB del shim, del DTB (`totalsize`) y del initrd de `/chosen`. El shim muestra además `IMAGE` (dirección real de `_head`, calculada con `adr`). Nueva imagen: `vince-boot-diag.img`, SHA256 `b45d8cf9…`.
-  - Watchdog: pendiente de saber si el teléfono se reinició solo.
+  - **Watchdog: LK no lo deja activo.** Con el shim colgado, la pantalla siguió fija sin reinicio (el bark está a 11 s y nadie lo atendía).
