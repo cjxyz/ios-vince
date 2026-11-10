@@ -23,7 +23,11 @@ publicado en el artefacto `userland-bin`.
 
 ## 3. ADT, payload y boot.img (local, WSL)
 Herramientas: `python3` y LLVM (`sudo apt install clang lld llvm`), que aporta `clang`, `ld.lld`, `llvm-objcopy` y `llvm-nm`.
+`tools/adt.py` necesita el CLI `lzfse` para el im4p; se compila desde `apfs-fuse/3rdparty/lzfse`: `cc -O2 -o ~/.local/bin/lzfse src/*.c`.
 ```
+# /product real del iPhone X (artwork traits para UIKit), desde el IPSW; no se versiona (*.adt en .gitignore):
+unzip -o -j ../ipsw/iPhone10,3_16.7.16_20H392_Restore.ipsw Firmware/all_flash/DeviceTree.d22ap.im4p -d ../rootwork/devicetree
+python3 -c "import sys; sys.path.insert(0,'tools'); import adt; open('research/ipsw-x/d22ap.adt','wb').write(adt.load('../rootwork/devicetree/DeviceTree.d22ap.im4p'))"
 python3 tools/mkadt_vince.py artifacts/vince.adt          # ADT: identidad iPhone10,3/D22AP, RAM 0xA0000000
 python3 tools/verify_adt_vince.py artifacts/vince.adt     # comprueba GIC, eMMC, touch y DRAM
 python3 tools/mkpayload_vince.py out/kernel/kernel.development.vince artifacts/vince.adt artifacts/vince.payload \
