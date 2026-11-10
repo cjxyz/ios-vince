@@ -136,3 +136,6 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
 - **Parche 0185 `vince-restart-to-fastboot`**: `vince_pmic_init()` instala `vince_halt_restart()` como `PE_halt_restart`. `kPERestartCPU`/`kPEHaltCPU` → `vince_reboot_bootloader()` (fastboot). `kPEPanicRestartCPU` espera `vincepanicwait` s (por defecto 20, máx. 600) para leer o fotografiar el panic y luego va a fastboot. Los demás tipos devuelven 0. Probado que 0182–0185 aplican en orden.
 - Sin cambios de código: mantener **volumen −** mientras el teléfono reinicia también debería llevar a fastboot (LK revisa las teclas en cada arranque).
 - CI de 0183 (run 42856841714, macos-15-intel): **verde**. `VinceGPU.cpp` y el nuevo `vince_adreno.c` compilan con avisos menores (`-Wmissing-prototypes` en las exportaciones `vince_gpu_*`, parámetros sin usar en `adreno_main`, casts en el self-test). Lanzado el build combinado 0183+0184+0185 (run 42858968219, `0237930`).
+- Build combinado (run 42858968219, `0237930`): **verde**, 0182–0185 aplicados, los mismos 45 saltados. El kernel contiene `VinceGPU`, el self-test y "rebooting into fastboot". Imágenes con el ADT nuevo (RAM de XNU hasta `0xec000000`):
+  - `vince-boot-gputest.img` (`741a127b…`): sin raíz, `mmcprobe=1 gpu=1 adreno_test=1`.
+  - `vince-boot-smp.img` (`7dab601f…`): iOS, 7 núcleos, `sweetfb_hz=30`, con 0184/0185.
