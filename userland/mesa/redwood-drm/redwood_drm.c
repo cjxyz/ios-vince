@@ -150,14 +150,24 @@ redwood_drm_map(int fd, uint32_t handle, uint64_t size)
 	mach_vm_address_t address = 0;
 	mach_vm_size_t mapped = 0;
 
+	IOOptionBits options = kIOMapAnywhere | kIOMapWriteCombineCache;
+	const char *cache = getenv("REDWOOD_DRM_CACHE");
+
 	(void)fd;
 	(void)size;
 	/*
 	 * Linux gives freedreno its buffers write-combined, with no cache of this processor's between
-	 * the program and the memory the GPU sees. So does the kernel's driver here: the memory is
-	 * made that way, and this mapping is as the memory is.
+	 * the program and the memory the GPU sees. The cache mode has to be asked for here:
+	 * IOUserClient::mapClientMemory64 replaces the one the driver's clientMemoryForType chose with
+	 * the caller's (kIOMapUserOptionsMask covers kIOMapCacheMask), and on vince the pool is RAM XNU
+	 * does not manage, whose default is device memory, where Mesa's unaligned stores fault
+	 * (SIGBUS, BUS_ADRALN). REDWOOD_DRM_CACHE=copyback maps it cached instead, for the kernel's
+	 * vincecache=1 mode, which does the cache maintenance.
 	 */
-	if (IOConnectMapMemory64(connection, handle, mach_task_self(), &address, &mapped, kIOMapAnywhere) != 0) {
+	if (cache != NULL && strcmp(cache, "copyback") == 0) {
+		options = kIOMapAnywhere | kIOMapCopybackCache;
+	}
+	if (IOConnectMapMemory64(connection, handle, mach_task_self(), &address, &mapped, options) != 0) {
 		return (void *)-1;              /* mmap()'s MAP_FAILED */
 	}
 	return (void *)(uintptr_t)address;
