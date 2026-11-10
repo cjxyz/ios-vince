@@ -10,7 +10,7 @@
  * started by launchd before the kernel's VinceGPU service exists (the Adreno comes up a few seconds after the
  * touch screen), so it waits up to 60 s for the service first: without it Mesa would quietly use softpipe.
  * Every step is announced, a fatal signal is reported with the step it hit, and at the end (or after a crash
- * or the 90 s timeout) the lines said so far are printed again every 10 s for 3 minutes, so they can still
+ * or the 90 s timeout) the lines said so far are printed again every 15 s for 10 minutes, so they can still
  * be read on the screen once the boot log has scrolled past them.
  */
 #include <fcntl.h>
@@ -105,12 +105,12 @@ replay(void)
 	}
 }
 
-/* the summary every 10 s for 3 minutes, then exit */
+/* the summary every 15 s for 10 minutes, then exit */
 static void __attribute__((noreturn))
 finish(int code)
 {
-	for (int i = 0; i < 18; i++) {
-		sleep(10);
+	for (int i = 0; i < 40; i++) {
+		sleep(15);
 		replay();
 	}
 	_exit(code);
