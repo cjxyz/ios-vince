@@ -45,7 +45,12 @@ python3 shim/build.py                       # → artifacts/vince-boot.img (boot
   fastboot -S 512M flash userdata ios16-root.simg
   ```
 
-## 5. Arranque y recuperación
+## 5. Auditoría de hardware
+```
+python3 tools/audit_vince_hw.py [--stock ../vince-stock]   # exit 1 si falta un bloque requerido
+```
+
+## 6. Arranque y recuperación
 ```
 fastboot boot artifacts/vince-boot.img       # nunca "fastboot flash boot"
 ```

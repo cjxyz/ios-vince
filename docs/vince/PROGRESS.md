@@ -5,7 +5,7 @@
 |---|---|---|
 | Fork y documentación | ✅ | 2026-11-10 |
 | CI del kernel en verde (este fork) | ⏳ | Upstream: último verde `c3c7b7f` (26 oct); los 4 commits posteriores (VinceGPU) fallaron o se cancelaron |
-| Auditoría DTS stock ↔ parches | ⏳ | |
+| Auditoría DTS stock ↔ parches | ✅ | `tools/audit_vince_hw.py`: solo falta el watchdog |
 | Shim + texto en pantalla | ⏳ | |
 | XNU 1 núcleo (GICv2 + timer) | ⏳ | |
 | Root en eMMC → launchd | ⏳ | |
@@ -35,4 +35,6 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
 - Decisión: la rama de trabajo `vince-port` parte de `c3c7b7f`, el último build verde de upstream. `main` del fork sigue igual que upstream.
 - Identidad git del repo: `cjxyz <cjxyzt@gmail.com>`.
 - Primer CI en el fork cancelado: GitHub retiró el runner `macos-14` ("configuration 'macos-14-arm64-us-default' is not supported"). Workflows pasados a `macos-15`. Riesgo: el Xcode más antiguo de esa imagen debe generar un `iig` compatible con la ABI IORPC de xnu-8796.
-- Siguiente paso: lanzar el CI en `vince-port` y escribir el script de auditoría.
+- CI relanzado en `macos-15` (run 42761468387).
+- `tools/audit_vince_hw.py` (auditoría DTS stock ↔ repo): coinciden GICD/GICC, eMMC SDHCI y core, QUP3, SPMI, cont_splash y GPIO 64/65/85. **Falta**: watchdog `0xB017000`. No aparecen ni la UART `0x78AF000` ni WCNSS `0x0A000000` (sin uso directo por ahora).
+- Siguiente paso: resultado del CI; luego decidir entre desactivar el watchdog en el shim o portar la emulación LSE.
