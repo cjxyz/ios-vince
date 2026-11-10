@@ -10,9 +10,9 @@
 | XNU 1 núcleo (GICv2 + timer) | ✅ | Kernel completo hasta `Waiting on ... Apple_HFS` (sin root) |
 | Root en eMMC → launchd | ✅ | launchd pasa las tareas de arranque y lanza LaunchDaemons |
 | Emulación LSE/LDAPR | ❌ falta | Upstream no la tiene; candidato: portar topaz 0081 |
-| SMP 8 núcleos | ⏳ | |
+| SMP 8 núcleos | 🧪 7 núcleos listos para probar | El ADT omite CPU1 (en upstream la usaba el monitor USB del shim) |
 | SpringBoard / lock screen | ✅ | **Pantalla de bloqueo de iOS 16.7.16 en el Redmi 5 Plus** (2026-11-10) |
-| Touch TD4310 + teclas | ⏳ | 0099 no vota reguladores RPM (L10/L6) |
+| Touch TD4310 + teclas | ✅ touch / ⏳ teclas | El touch responde (LK deja L10/L6 encendidos); muy lento con 1 núcleo |
 | USB ECM / log por red | ⏳ | |
 | Wi‑Fi / BT | ⏳ | parches 0119–0179 de upstream |
 | GPU Adreno 506 | ⏳ | 0181 de upstream; ios-casuarina como referencia |
@@ -102,3 +102,5 @@ Formato: fecha · qué se probó · resultado · evidencia (log/foto) · siguien
   - Decisión: volver al HFS+ **con journal** de sweet (`mkfs.hfsplus -J`). `vince_mmc` atiende `DKIOCSYNCHRONIZE` y escribe de forma síncrona. Hay que reconstruir la imagen y volver a flashear.
 - Imagen raíz reconstruida **con journal** (`mkfs.hfsplus -J`, journal de 8 MB). Detalle: en un volumen con journal montado por Linux (`lastMountedVersion H+Lx`), `fsck.hfsplus -n` informa siempre de "Volume header needs minor repair" (debug: `invalid primary VHB at 2 result 35`), mientras `-y` no cambia nada y dice "appears to be OK". La verificación pasa a usar `-y`. Nueva `ios16-root.simg` generada.
 - 🎉 **PANTALLA DE BLOQUEO.** Con la raíz con journal y el `/product` real del iPhone X (`vince-boot-root.img` `8ffe46e5…`), iOS llega a la pantalla de bloqueo. El texto del kernel sigue dibujándose encima. Nueva imagen con `sweetfb_noconsole=1`. Touch (`vincetouch`) y teclas (`vincekeys`) de vince están activos por defecto: pendiente de confirmar si responden.
+- Con `sweetfb_noconsole=1` (`b9aaaed9…`): **el touch responde** en la pantalla de bloqueo, pero todo va muy lento (1 núcleo, render por CPU, primer arranque).
+- SMP: `SweetCPU.cpp` arranca los núcleos de los nodos `/cpus` del ADT por PSCI `CPU_ON`. `mkadt_vince.py` declara 0 y 2–7 (CPU1 la usaba el monitor USB del shim de upstream; nuestro shim la deja aparcada en `wfe`, así que se podría añadir después). Nueva imagen `vince-boot-smp.img` con `cpus=7`; la de 1 núcleo se conserva como respaldo.
