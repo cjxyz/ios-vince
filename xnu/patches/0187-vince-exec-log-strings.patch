@@ -1,0 +1,18 @@
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+index ee173c3..f493bc3 100644
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -7462,7 +7462,12 @@ process_signature(proc_t p, struct image_params *imgp)
+ 			}
+ #if defined(ARM64_BOARD_CONFIG_SWEET) || defined(ARM64_BOARD_CONFIG_VINCE)
+ 			/* SWEET runs every iOS binary this way: one short line per exec. */
+-			if (imgp->ip_argc > 1 && imgp->ip_startargv != NULL && imgp->ip_endargv > imgp->ip_startargv) {
++			/*
++			 * Only read the argument strings when both ends lie inside what exec copied into ip_strings: launchd
++			 * (pid 1) once panicked here with a kernel data abort in __doprnt, reading past the buffer.
++			 */
++			if (imgp->ip_argc > 1 && imgp->ip_strings != NULL && imgp->ip_startargv >= imgp->ip_strings &&
++			    imgp->ip_endargv > imgp->ip_startargv && imgp->ip_endargv <= imgp->ip_strendp) {
+ 				/* xpcproxy's argv names the launchd job it starts */
+ 				char *a = imgp->ip_startargv;
+ 				char *e = imgp->ip_endargv;
