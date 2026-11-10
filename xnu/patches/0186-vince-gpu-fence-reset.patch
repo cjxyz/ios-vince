@@ -1,0 +1,29 @@
+diff --git a/bsd/dev/vince_adreno.c b/bsd/dev/vince_adreno.c
+index 5768fc9..7f33b84 100644
+--- a/bsd/dev/vince_adreno.c
++++ b/bsd/dev/vince_adreno.c
+@@ -721,6 +721,11 @@ step8_ucode_ring(void)
+ 	}
+ 	gmem_w32(GPU_SCRATCH_OFF, 0xdeaddeadu);
+ 	gmem_w32(GPU_SCRATCH_OFF + 4, 0xdeaddeadu);
++	/*
++	 * The fence word vince_gpu_done() compares against. This RAM keeps its contents over a warm reset, so without
++	 * this a fence count left by the previous boot made the first fences of this one look done before the GPU ran.
++	 */
++	gmem_w32(GPU_SCRATCH_OFF + 0x20, 0);
+ 	rb_wptr = 0;
+ 
+ 	gw(A5_CP_ME_INSTR_BASE_LO, GPU_MEM_PA + GPU_PM4_OFF);
+diff --git a/iokit/Kernel/arm/VinceGPU.cpp b/iokit/Kernel/arm/VinceGPU.cpp
+index e8eee4f..2ac841a 100644
+--- a/iokit/Kernel/arm/VinceGPU.cpp
++++ b/iokit/Kernel/arm/VinceGPU.cpp
+@@ -479,6 +479,8 @@ VinceGPUSelfTest(void)
+ 		IOLog("VinceGPU test: 1 PASS (one word, fence %u)\n", fence);
+ 	} else {
+ 		IOLog("VinceGPU test: 1 FAIL (fence %u, d[0] %#x, d[1] %#x)\n", fence, d[0], d[1]);
++		IOSleep(50);
++		IOLog("VinceGPU test: 1 after 50 ms: d[0] %#x, d[1] %#x, done %d\n", d[0], d[1], (int)vince_gpu_done(fence));
+ 	}
+ 
+ 	/* 2: sixteen words in one packet */
