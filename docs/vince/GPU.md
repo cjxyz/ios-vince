@@ -43,7 +43,8 @@ declaraciones (`kvtophys` sin declarar, `pmap_paddr_t` desconocido), no por el d
   no sirve para la A506.
 
 ## Plan
-1. **Verificar 0181 en nuestro teléfono**: `vince-boot-gpu.img` (sin raíz, `adreno=11 adreno_pause=2000`) y ver hasta qué paso llega.
+1. **Verificar 0181 en nuestro teléfono**: `vince-boot-gpu.img` (sin raíz, `mmcprobe=1 adreno=11 adreno_pause=2000`) y ver hasta qué paso llega.
+   Ojo: `vince_adreno_init()` solo se ejecuta tras inicializar `vince_mmc` (`rd=mmcroot0` o `mmcprobe=1`), porque la llama `vince_input_start()`.
 2. **Portar el stack de casuarina** (kernel 0982–0988 + userland Mesa/EAGL/inject) sobre nuestro árbol. Puntos a resolver:
    - encajarlo con nuestro `SweetFramebuffer`/`SweetSurface` (0046);
    - el mapa de RAM: casuarina usa XNU en `0x20000000–0x7fffffff` con el pool arriba; nosotros, XNU en `0xA0000000` y 0181 en `0x47800000`/`0x95000000`;
