@@ -108,3 +108,22 @@ Con `mmcrw=1`, el kernel copia cada 10 s el anillo de consola (8 MiB) a los **ú
 .\adb pull /tmp/vincelog.bin
 ```
 y en WSL: `python3 tools/vince-log-decode.py vincelog.bin boot.log`. Se ve el último arranque con `mmcrw=1`, hasta el último volcado.
+
+## 8. Librerías nuevas sin reflashear la raíz (`vincepkg`)
+La raíz es HFS+ y TWRP no la monta, así que cada librería nueva obligaba a `addgpu_root.sh` + reflashear 12 GB. Desde el
+`backboardd-wrap` con `vincepkg`, hay un hueco de **32 MiB de `userdata` justo antes del log de 0191** (detrás del HFS+):
+TWRP lo escribe con `dd` y, en el siguiente arranque, el wrapper (que corre como root antes de `backboardd`) lo lee por
+`/dev/rmmcroot0`, comprueba cabecera y CRC32, e instala los ficheros en `/vince/…` (solo ahí) si la generación es nueva
+(`/vince/pkg.gen`). Lo que hace sale en la consola (`vincepkg: …`) y en el log persistente. `vincepkg=0` en los boot-args lo
+ignora.
+```
+python3 tools/mkvincepkg.py out/vincepkg.bin --gl out/vincegl      # libvince-gl + libvince-inject del artefacto vincegl
+python3 tools/mkvincepkg.py out/vincepkg.bin lib/X.dylib=ruta ...  # ficheros sueltos (destino relativo a /vince)
+python3 tools/mkvincepkg.py out/vincepkg.bin --clear              # vaciar el hueco
+```
+Desde TWRP (PowerShell; el script imprime los comandos):
+```
+.\adb push \\wsl.localhost\Ubuntu\home\lau\proyectos\personal\xnuios\ios-vince\out\vincepkg.bin /tmp/vincepkg.bin
+.\adb shell 'p=/dev/block/bootdevice/by-name/userdata; n=$(blockdev --getsz $p); dd if=/tmp/vincepkg.bin of=$p bs=512 seek=$(( (n-16385-65536) / 8 * 8 )) conv=notrunc,fsync && echo ok'
+```
+El propio wrapper no va en el paquete: cambiarlo sigue pidiendo `addgpu_root.sh` y reflashear.
