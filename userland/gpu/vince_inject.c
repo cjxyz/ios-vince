@@ -128,12 +128,6 @@ my_renderer(void *server)
 	static void *last = (void *)1;
 	void *renderer;
 
-	if (calls == 0) {
-		void *metal = dlopen("/System/Library/Frameworks/Metal.framework/Metal", RTLD_NOW);
-		void *(*create)(void) = metal ? (void *(*)(void))dlsym(metal, "MTLCreateSystemDefaultDevice") : NULL;
-
-		fprintf(stderr, "topaz-ws: MTLCreateSystemDefaultDevice() -> %p\n", create ? create() : (void *)-1);
-	}
 	renderer = orig_renderer(server);
 	calls++;
 	if (renderer != last || calls <= 3) {
@@ -157,9 +151,57 @@ my_render_update(void *server, void *update, unsigned *flags)
 	return r;
 }
 
+/*
+ * The fourth log (2026-11-11) had both hooks installed and neither called, while the display kept presenting: the
+ * frames come another way. The display's own entry points (vtable of CA::WindowServer::AppleCLCDDisplay) say which:
+ * for the first calls of each, the caller chain as cache addresses (minus the slide), symbolized offline with
+ * tools/dsc.py. All of them take integer/pointer arguments only, so one pass-through shape serves.
+ */
+#define VT_APPLE_CLCD_DISPLAY   0x1d5b38788UL   /* vtable for CA::WindowServer::AppleCLCDDisplay */
+
+typedef uintptr_t (*passthrough_fn)(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t);
+
+static void
+say_callers(const char *what, unsigned call)
+{
+	void *frames[14];
+	char line[512];
+	int n = backtrace(frames, 14), at;
+
+	at = snprintf(line, sizeof(line), "topaz-ws: %s call %u from", what, call);
+	for (int i = 1; i < n && at < (int)sizeof(line) - 20; i++) {
+		uintptr_t a = (uintptr_t)frames[i];
+		at += snprintf(line + at, sizeof(line) - at, " %#lx%s", a >= slide + CACHE_BASE ? a - slide : a,
+		    a >= slide + CACHE_BASE ? "" : "*");
+	}
+	fprintf(stderr, "%s\n", line);
+}
+
+#define DISPLAY_HOOK(name, offset, expected)                                                                        \
+	static passthrough_fn orig_##name;                                                                          \
+	static uintptr_t my_##name(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e, uintptr_t f)   \
+	{                                                                                                           \
+		static unsigned calls;                                                                              \
+		if (++calls <= 3 || (calls & (calls - 1)) == 0) {                                                   \
+			say_callers(#name, calls);                                                                  \
+		}                                                                                                   \
+		return orig_##name(a, b, c, d, e, f);                                                               \
+	}
+DISPLAY_HOOK(begin_update, 0x178, 0x1882e6798UL)
+DISPLAY_HOOK(finish_update, 0x180, 0x1882d0f88UL)
+DISPLAY_HOOK(present_surface, 0x1b0, 0x18852d42cUL)
+
 static void
 window_server_hooks(void)
 {
+	orig_begin_update = (passthrough_fn)replace_virtual("begin_update", VSLOT(VT_APPLE_CLCD_DISPLAY, 0x178),
+	    0x1882e6798UL, (void *)my_begin_update);
+	orig_finish_update = (passthrough_fn)replace_virtual("finish_update", VSLOT(VT_APPLE_CLCD_DISPLAY, 0x180),
+	    0x1882d0f88UL, (void *)my_finish_update);
+	orig_present_surface = (passthrough_fn)replace_virtual("present_surface", VSLOT(VT_APPLE_CLCD_DISPLAY, 0x1b0),
+	    0x18852d42cUL, (void *)my_present_surface);
+	fprintf(stderr, "topaz-ws: AppleCLCDDisplay hooks: begin_update %s, finish_update %s, present_surface %s\n",
+	    orig_begin_update ? "on" : "OFF", orig_finish_update ? "on" : "OFF", orig_present_surface ? "on" : "OFF");
 	orig_renderer = replace_virtual("renderer", VSLOT(VT_EAGL_SERVER, 0x1a0), FN_EAGL_RENDERER, my_renderer);
 	orig_render_update = replace_virtual("render_update", VSLOT(VT_EAGL_SERVER, 0x178), FN_EAGL_RENDER_UPDATE,
 	    my_render_update);
