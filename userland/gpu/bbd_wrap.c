@@ -18,10 +18,13 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
-#include <sys/disk.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
+
+/* <sys/disk.h> is not in the iOS SDK; these are its values */
+#define DKIOCGETBLOCKSIZE  _IOR('d', 24, uint32_t)
+#define DKIOCGETBLOCKCOUNT _IOR('d', 25, uint64_t)
 
 #define REAL "/usr/libexec/real/backboardd"
 #define LOADER "/vince/lib/libvince-inject.dylib"
