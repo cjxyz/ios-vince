@@ -1,0 +1,81 @@
+From: cjxyz <cjxyz776@gmail.com>
+Subject: [PATCH] vince-0192: log the user backtrace of the first window-server swaps
+
+The GL renderer hooks in backboardd never fire although frames keep being
+presented; print the caller chain (TRC swap ...) of the first swaps and
+of swap 100 and 1000, to symbolize against the shared cache.
+---
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp	2026-11-11 01:59:30.605019190 -0500
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp	2026-11-11 01:59:47.537470659 -0500
+@@ -38,6 +38,7 @@
+ #include "SweetSurface.h"
+ 
+ extern "C" int sweet_console_muted;     /* osfmk/console/serial_console.c */
++extern "C" void sweet_trace_caller(const char *tag);    /* osfmk/kern/exception.c (0192) */
+ #if defined(ARM64_BOARD_CONFIG_VINCE)
+ extern "C" int vince_wled_set(int on);  /* bsd/dev/vince_pmic.c: LCD backlight */
+ #endif
+@@ -389,6 +390,10 @@
+ 	memcpy(fPending, rec, SWEET_FB_SWAP_REC_SIZE);
+ 	fDirty = true;
+ 	IOLockUnlock(fLock);
++	/* 0192: which code of the window server presents (its frames had been seen to bypass every hook of ours) */
++	if (sweet_fb_swap_count < 4 || sweet_fb_swap_count == 99 || sweet_fb_swap_count == 999) {
++		sweet_trace_caller("swap");
++	}
+ 	if ((++sweet_fb_swap_count % 1000) == 0) {
+ 		IOLog("SWEET FB: %llu swaps\n", sweet_fb_swap_count);
+ 	}
+diff --git a/osfmk/kern/exception.c b/osfmk/kern/exception.c
+--- a/osfmk/kern/exception.c	2026-11-11 01:59:30.571483689 -0500
++++ b/osfmk/kern/exception.c	2026-11-11 01:59:57.751563736 -0500
+@@ -1040,6 +1040,48 @@
+ 	task_unlock(task);
+ }
+ 
++/*
++ * VINCE: the user backtrace of the current thread (one line), for kernel entry points that want to know which code of
++ * the caller got there: "TRC tag name[pid] slide S pc lr bt ...". Addresses as they are (subtract the slide for the
++ * shared cache).
++ */
++void sweet_trace_caller(const char *tag);
++
++void
++sweet_trace_caller(const char *tag)
++{
++	task_t task = current_task();
++	vm_map_t map = get_task_map(task);
++	arm_saved_state_t *ss = find_user_regs(current_thread());
++	vm_shared_region_t sr = vm_shared_region_get(task);
++	uint64_t slide = 0, fp;
++	char line[400];
++	int n;
++
++	if (sr != NULL) {
++		slide = sr->sr_slide;
++		vm_shared_region_deallocate(sr);
++	}
++	if (ss == NULL || !is_saved_state64(ss)) {
++		return;
++	}
++	fp = get_saved_state_fp(ss);
++	n = snprintf(line, sizeof(line), "TRC %s %s[%d] slide 0x%llx pc 0x%llx lr 0x%llx bt", tag, (const char *)proc_name_address(get_bsdtask_info(task)),
++	    proc_pid(get_bsdtask_info(task)), slide, get_saved_state_pc(ss), get_saved_state_lr(ss));
++	for (int i = 0; i < 20 && fp != 0 && (fp & 7) == 0 && n < (int)sizeof(line) - 20; i++) {
++		uint64_t frame[2];
++		if (vm_map_read_user(map, fp, frame, sizeof(frame)) != KERN_SUCCESS) {
++			break;
++		}
++		n += snprintf(line + n, sizeof(line) - n, " 0x%llx", frame[1]);
++		if (frame[0] <= fp) {
++			break;
++		}
++		fp = frame[0];
++	}
++	printf("%s\n", line);
++}
++
+ #endif /* ARM64_BOARD_CONFIG_SWEET */
+ 
+ kern_return_t
