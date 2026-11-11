@@ -124,6 +124,6 @@ python3 tools/mkvincepkg.py out/vincepkg.bin --clear              # vaciar el hu
 Desde TWRP (PowerShell; el script imprime los comandos):
 ```
 .\adb push \\wsl.localhost\Ubuntu\home\lau\proyectos\personal\xnuios\ios-vince\out\vincepkg.bin /tmp/vincepkg.bin
-.\adb shell 'p=/dev/block/bootdevice/by-name/userdata; n=$(blockdev --getsz $p); dd if=/tmp/vincepkg.bin of=$p bs=512 seek=$(( (n-16385-65536) / 8 * 8 )) conv=notrunc,fsync && echo ok'
+.\adb shell 'p=/dev/block/bootdevice/by-name/userdata; n=$(blockdev --getsz $p); dd if=/tmp/vincepkg.bin of=$p bs=512 seek=$(( (n-16385-65536) / 8 * 8 )) && sync && echo ok'
 ```
 El propio wrapper no va en el paquete: cambiarlo sigue pidiendo `addgpu_root.sh` y reflashear.

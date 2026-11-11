@@ -65,7 +65,7 @@ def main():
     print(f"""
 From TWRP (PowerShell, with {out} reachable as \\\\wsl.localhost\\Ubuntu\\...):
   .\\adb push <{out}> /tmp/vincepkg.bin
-  .\\adb shell 'p=/dev/block/bootdevice/by-name/userdata; n=$(blockdev --getsz $p); dd if=/tmp/vincepkg.bin of=$p bs=512 seek={seek} conv=notrunc,fsync && echo ok'""",
+  .\\adb shell 'p=/dev/block/bootdevice/by-name/userdata; n=$(blockdev --getsz $p); dd if=/tmp/vincepkg.bin of=$p bs=512 seek={seek} && sync && echo ok'""",
           file=sys.stderr)
 
 
