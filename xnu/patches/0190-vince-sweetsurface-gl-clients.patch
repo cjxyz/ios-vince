@@ -1,5 +1,5 @@
 diff --git a/iokit/Kernel/arm/SweetSurface.cpp b/iokit/Kernel/arm/SweetSurface.cpp
-index 6708085..fbeb25d 100644
+index 6708085..1562dda 100644
 --- a/iokit/Kernel/arm/SweetSurface.cpp
 +++ b/iokit/Kernel/arm/SweetSurface.cpp
 @@ -22,7 +22,11 @@
@@ -61,6 +61,15 @@ index 6708085..fbeb25d 100644
  	OSSafeReleaseNULL(memory);
  	OSSafeReleaseNULL(state);
  	OSObject::free();
+@@ -98,7 +122,7 @@ SweetSurface::kernelAddress()
+ 	}
+ 	IOLockLock(sweet_surface_lock);
+ 	if (kernelMap == NULL && memory != NULL) {
+-		kernelMap = memory->map(kIOMapWriteCombineCache);
++		kernelMap = memory->map(wrapped ? kIOMapDefaultCache : kIOMapWriteCombineCache);
+ 	}
+ 	IOLockUnlock(sweet_surface_lock);
+ 	return kernelMap != NULL ? (uintptr_t)kernelMap->getVirtualAddress() : 0;
 @@ -296,6 +320,8 @@ sweet_dict_u32(OSDictionary *dict, const char *key, uint32_t def)
  	return n != NULL ? n->unsigned32BitValue() : def;
  }
@@ -167,19 +176,50 @@ index 6708085..fbeb25d 100644
  	put64(out, 0x08, ref->state->getAddress());
  	put64(out, 0x10, ref->state->getAddress() + SWEET_SURFACE_TIMESTAMPS);
  	put32(out, 0x18, s->id);
-@@ -731,6 +771,11 @@ IOSurfaceRootUserClient::create(IOExternalMethodArguments *args)
- 			bzero(mem->getBytesNoCopy(), s->allocSize);
- 			s->memory = mem;
- 			s->mapCache = kIOMapDefaultCache;
+@@ -717,7 +757,41 @@ IOSurfaceRootUserClient::create(IOExternalMethodArguments *args)
+ 	}
+ 	s->parentID = args->scalarInputCount > 0 ? (uint32_t)args->scalarInput[0] : 0;
+ 	ret = sweet_surface_layout(s, props);
+-	if (ret == kIOReturnSuccess) {
++	/*
++	 * IOSurfaceAddress: a surface around memory the creator has already.
++	 * CoreAnimation's GL renderer makes its pictures (applications' icons,
++	 * layers' contents) into surfaces so; given fresh memory instead, every
++	 * icon was a transparent square.
++	 */
++	OSNumber *client_address = OSDynamicCast(OSNumber, props->getObject("IOSurfaceAddress"));
++	if (ret == kIOReturnSuccess && client_address != NULL) {
++		uint64_t used = (uint64_t)s->offset + (uint64_t)s->bytesPerRow * sweet_div_up(s->height, s->elementHeight);
++		for (uint32_t i = 0; i < s->planeCount; i++) {
++			if ((uint64_t)s->planes[i].offset + s->planes[i].size > used) {
++				used = (uint64_t)s->planes[i].offset + s->planes[i].size;
++			}
++		}
 +		/* the memory is as big as its owner says (IOSurfaceAllocSize), not rounded up by us */
 +		uint64_t owned = sweet_dict_u32(props, "IOSurfaceAllocSize", 0);
 +		if (owned != 0) {
 +			used = owned;
 +		}
- 			if (!sweet_surface_publish(s)) {
- 				ret = kIOReturnNoResources;
- 			}
-@@ -754,6 +799,337 @@ IOSurfaceRootUserClient::create(IOExternalMethodArguments *args)
++		ret = sweet_surface_use_task_memory(s, fTask, client_address->unsigned64BitValue(), used);
++		/*
++		 * Published here: the branch below only runs for surfaces that still need
++		 * memory. Unpublished, every such surface had id 0, and the framework took them
++		 * all for one surface: releasing any of them unmapped the views of the others.
++		 */
++		if (ret == kIOReturnSuccess && !sweet_surface_publish(s)) {
++			ret = kIOReturnNoResources;
++		}
++		static uint32_t told;
++		if (told++ < 6) {
++			IOLog("SWEET SURF: create around client memory %#llx (%llu bytes) %ux%u fmt 0x%x -> 0x%x\n",
++			    client_address->unsigned64BitValue(), used, s->width, s->height, s->pixelFormat, ret);
++		}
++	}
++	if (ret == kIOReturnSuccess && s->memory == NULL) {
+ 		IOBufferMemoryDescriptor *mem = NULL;
+ 		if ((uint64_t)OSAddAtomic64(s->allocSize, (volatile SInt64 *)&sweet_surface_wired) +
+ 		    s->allocSize <= SWEET_SURFACE_WIRED_MAX) {
+@@ -754,6 +828,329 @@ IOSurfaceRootUserClient::create(IOExternalMethodArguments *args)
  	return ret;
  }
  
@@ -194,14 +234,6 @@ index 6708085..fbeb25d 100644
 +	if (address == 0 || size == 0 || size > SWEET_SURFACE_MAX_ALLOC) {
 +		return kIOReturnBadArgument;
 +	}
-+		/*
-+		 * Published here: the two branches below only run for surfaces that still need
-+		 * memory. Unpublished, every such surface had id 0, and the framework took them
-+		 * all for one surface: releasing any of them unmapped the views of the others.
-+		 */
-+		if (ret == kIOReturnSuccess && !sweet_surface_publish(s)) {
-+			ret = kIOReturnNoResources;
-+		}
 +	uint64_t first = trunc_page_64(address);
 +	uint64_t length = round_page_64(address + size) - first;
 +	IOMemoryDescriptor *md = NULL;
@@ -517,7 +549,7 @@ index 6708085..fbeb25d 100644
  IOReturn
  IOSurfaceRootUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments *args,
      __unused IOExternalMethodDispatch *dispatch, __unused OSObject *target,
-@@ -772,6 +1148,46 @@ IOSurfaceRootUserClient::externalMethod(uint32_t selector, IOExternalMethodArgum
+@@ -772,6 +1169,46 @@ IOSurfaceRootUserClient::externalMethod(uint32_t selector, IOExternalMethodArgum
  	}
  	case kSweetSurfaceCreate:
  		return create(args);
@@ -564,7 +596,7 @@ index 6708085..fbeb25d 100644
  	case kSweetSurfaceLookup: {
  		SweetSurface *s = sweet_surface_copy((uint32_t)arg0);
  		IOReturn ret = kIOReturnNotFound;
-@@ -806,6 +1222,19 @@ IOSurfaceRootUserClient::externalMethod(uint32_t selector, IOExternalMethodArgum
+@@ -806,6 +1243,19 @@ IOSurfaceRootUserClient::externalMethod(uint32_t selector, IOExternalMethodArgum
  		return kIOReturnSuccess;
  	}
  	default:
@@ -584,7 +616,7 @@ index 6708085..fbeb25d 100644
  		/* Values, notifications, ownership, timestamps...: accept and ignore. */
  		for (uint32_t i = 0; i < args->scalarOutputCount; i++) {
  			args->scalarOutput[i] = 0;
-@@ -881,14 +1310,53 @@ IOSurfaceRootUserClient::trapUnlock(void *id, void *options, void *seedOut,
+@@ -881,14 +1331,53 @@ IOSurfaceRootUserClient::trapUnlock(void *id, void *options, void *seedOut,
  	return ret;
  }
  
@@ -640,7 +672,7 @@ index 6708085..fbeb25d 100644
  	}
  	IOLockUnlock(fLock);
  	return ref != NULL ? kIOReturnSuccess : kIOReturnNotFound;
-@@ -899,7 +1367,13 @@ static IOExternalTrap sweet_surface_traps[] = {
+@@ -899,7 +1388,13 @@ static IOExternalTrap sweet_surface_traps[] = {
  	[kSweetSurfaceTrapDecrementUse]  = { NULL, (IOTrap) & IOSurfaceRootUserClient::trapUseCount },
  	[kSweetSurfaceTrapLock]          = { NULL, (IOTrap) & IOSurfaceRootUserClient::trapLock },
  	[kSweetSurfaceTrapUnlock]        = { NULL, (IOTrap) & IOSurfaceRootUserClient::trapUnlock },
