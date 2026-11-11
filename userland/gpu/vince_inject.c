@@ -105,6 +105,68 @@ my_function_uniform(void *context, unsigned index, size_t components, size_t cou
 	orig_function_uniform(context, index, components, count, values);
 }
 
+/*
+ * Which renderer the window server picks (diagnostics, every boot with GL). AppleDisplay::new_server() always makes
+ * an EAGLServer; its render_update() asks renderer() first, and renderer() tries Metal (MTLCreateSystemDefaultDevice)
+ * and, only when that gives no device, an OpenGL ES context (-[EAGLContext initWithAPI:properties:], which is ours).
+ * Neither of ours had been seen called on the phone (2026-11-11): these say whether the server gets that far and what
+ * it got. Addresses from the 16.7.16 cache's local symbols (__ZTVN2CA12WindowServer10EAGLServerE and its slots).
+ */
+#define VT_EAGL_SERVER          0x1d5b39ed0UL   /* vtable for CA::WindowServer::EAGLServer */
+#define FN_EAGL_RENDERER        0x1882eaf3cUL   /* CA::WindowServer::EAGLServer::renderer() */
+#define FN_EAGL_RENDER_UPDATE   0x1883601dcUL   /* CA::WindowServer::EAGLServer::render_update(CA::Render::Update*, unsigned&) */
+#define SERVER_SHARED(server)   (*(char **)((char *)(server) + 96))
+#define SERVER_GL_CONTEXT(server) (*(void **)((char *)(server) + 800))
+
+static void *(*orig_renderer)(void *server);
+static uintptr_t (*orig_render_update)(void *server, void *update, unsigned *flags);
+
+static void *
+my_renderer(void *server)
+{
+	static unsigned calls;
+	static void *last = (void *)1;
+	void *renderer;
+
+	if (calls == 0) {
+		void *metal = dlopen("/System/Library/Frameworks/Metal.framework/Metal", RTLD_NOW);
+		void *(*create)(void) = metal ? (void *(*)(void))dlsym(metal, "MTLCreateSystemDefaultDevice") : NULL;
+
+		fprintf(stderr, "topaz-ws: MTLCreateSystemDefaultDevice() -> %p\n", create ? create() : (void *)-1);
+	}
+	renderer = orig_renderer(server);
+	calls++;
+	if (renderer != last || calls <= 3) {
+		char *shared = SERVER_SHARED(server);
+		fprintf(stderr, "topaz-ws: renderer() call %u -> %p (context %p, Metal device %p)\n", calls, renderer,
+		    SERVER_GL_CONTEXT(server), shared ? *(void **)(shared + 264) : NULL);
+		last = renderer;
+	}
+	return renderer;
+}
+
+static uintptr_t
+my_render_update(void *server, void *update, unsigned *flags)
+{
+	static unsigned calls;
+	uintptr_t r = orig_render_update(server, update, flags);
+
+	if (++calls <= 3 || (calls & (calls - 1)) == 0) {
+		fprintf(stderr, "topaz-ws: render_update call %u -> %#lx (flags %#x)\n", calls, r, flags ? *flags : 0);
+	}
+	return r;
+}
+
+static void
+window_server_hooks(void)
+{
+	orig_renderer = replace_virtual("renderer", VSLOT(VT_EAGL_SERVER, 0x1a0), FN_EAGL_RENDERER, my_renderer);
+	orig_render_update = replace_virtual("render_update", VSLOT(VT_EAGL_SERVER, 0x178), FN_EAGL_RENDER_UPDATE,
+	    my_render_update);
+	fprintf(stderr, "topaz-ws: EAGLServer hooks: renderer %s, render_update %s\n", orig_renderer ? "on" : "OFF",
+	    orig_render_update ? "on" : "OFF");
+}
+
 static void
 gl_hooks(void *lib)
 {
@@ -126,6 +188,7 @@ gl_hooks(void *lib)
 	}
 	fprintf(stderr, "topaz-gl: GLESContext hooks: function_supported %s, function_uniform %s\n",
 	    orig_function_supported ? "on" : "OFF", orig_function_uniform ? "on" : "OFF");
+	window_server_hooks();
 }
 
 /* Where a crash happened, printed to stderr (the console): image + offset + symbol. */
