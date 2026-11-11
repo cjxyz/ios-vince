@@ -3,17 +3,18 @@
 # within WAIT seconds (GitHub has no queue timeout or runner fallback of its own: runs-on is fixed per job and
 # timeout-minutes does not count the time in the queue).
 #
-#   tools/ci-run.sh [WORKFLOW] [WAIT]          (defaults: xnu-vince, 60)
+#   tools/ci-run.sh [WORKFLOW] [WAIT] [BRANCH]   (defaults: xnu-vince, 60, the branch checked out in the current directory)
 #
-# WORKFLOW is xnu-vince, mesa or vincegl (all take the runner input). The run is on the current branch of
-# cjxyz/ios-vince; the arm64 run is cancelled before the Intel one starts. Prints the id of the run that went ahead.
+# WORKFLOW is xnu-vince, mesa or vincegl (all take the runner input). The run is on BRANCH of cjxyz/ios-vince
+# (pushed already); the arm64 run is cancelled before the Intel one starts. Prints the id of the run that went ahead.
 # Uses the cjxyz account's token from gh (the active gh account may be another one).
 set -euo pipefail
 
 wf=${1:-xnu-vince}
 wait_s=${2:-60}
 repo=cjxyz/ios-vince
-ref=$(git -C "$(dirname "$0")/.." branch --show-current)
+ref=${3:-$(git branch --show-current)}
+[[ -n $ref ]] || { echo "no branch: pass one or run from a checkout" >&2; exit 1; }
 export GH_TOKEN=${GH_TOKEN:-$(gh auth token --user cjxyz)}
 
 # The id of the newest run of $wf on $ref created at or after $1 (UTC, ISO 8601), or nothing yet.
