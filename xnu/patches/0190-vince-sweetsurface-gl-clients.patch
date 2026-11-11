@@ -1,5 +1,5 @@
 diff --git a/iokit/Kernel/arm/SweetSurface.cpp b/iokit/Kernel/arm/SweetSurface.cpp
-index 6708085..1562dda 100644
+index 6708085..379f87e 100644
 --- a/iokit/Kernel/arm/SweetSurface.cpp
 +++ b/iokit/Kernel/arm/SweetSurface.cpp
 @@ -22,7 +22,11 @@
@@ -79,37 +79,7 @@ index 6708085..1562dda 100644
  static uint32_t
  sweet_div_up(uint32_t a, uint32_t b)
  {
-@@ -390,8 +416,10 @@ public:
- 	IOMemoryMap  *data;
- 	IOMemoryMap  *state;
- 	uint32_t      count;
-+	bool          detached;     /* trap 4 seen: the framework is releasing this view */
-+	bool          released;     /* released: only its state page stays mapped (fZombies) */
- 
--	bool init() APPLE_KEXT_OVERRIDE { return OSObject::init(); }
-+	bool init() APPLE_KEXT_OVERRIDE { detached = false; released = false; return OSObject::init(); }
- 	void free() APPLE_KEXT_OVERRIDE;
- };
- 
-@@ -403,7 +431,9 @@ SweetSurfaceRef::free()
- 	OSSafeReleaseNULL(data);
- 	OSSafeReleaseNULL(state);
- 	if (surface != NULL) {
--		sweet_surface_put(surface);
-+		if (!released) {
-+			sweet_surface_put(surface);
-+		}
- 		surface->release();
- 		surface = NULL;
- 	}
-@@ -438,11 +468,15 @@ class IOSurfaceRootUserClient : public IOUserClient {
- 	task_t   fTask;
- 	IOLock  *fLock;
- 	OSArray *fRefs;
-+	OSArray *fZombies;      /* released views whose state page is still mapped, oldest first */
- 
--	SweetSurfaceRef *findRef(uint32_t id, unsigned int *index);
-+	SweetSurfaceRef *findRef(uint32_t id, unsigned int *index, bool detached = false);
+@@ -443,6 +469,9 @@ class IOSurfaceRootUserClient : public IOUserClient {
  	IOReturn addRef(SweetSurface *s, SweetSurfaceRef **refOut, bool *existing);
  	IOReturn returnSurface(SweetSurface *s, IOExternalMethodArguments *args);
  	IOReturn create(IOExternalMethodArguments *args);
@@ -119,55 +89,15 @@ index 6708085..1562dda 100644
  
  public:
  	bool initWithTask(task_t owningTask, void *securityID, UInt32 type) APPLE_KEXT_OVERRIDE;
-@@ -457,6 +491,7 @@ public:
+@@ -457,6 +486,7 @@ public:
  	IOReturn trapLock(void *id, void *options, void *seedOut, void *, void *, void *);
  	IOReturn trapUnlock(void *id, void *options, void *seedOut, void *, void *, void *);
  	IOReturn trapRelease(void *id, void *, void *, void *, void *, void *);
-+	IOReturn trapDetach(void *id, void *, void *, void *, void *, void *);
++	IOReturn trapDetach(void *, void *, void *, void *, void *, void *);
  };
  
  OSDefineMetaClassAndStructors(IOSurfaceRootUserClient, IOUserClient);
-@@ -485,6 +520,7 @@ IOSurfaceRootUserClient::initWithTask(task_t owningTask, void *securityID, UInt3
- 	fTask = owningTask;
- 	fLock = IOLockAlloc();
- 	fRefs = OSArray::withCapacity(16);
-+	fZombies = OSArray::withCapacity(16);
- 	return fLock != NULL && fRefs != NULL;
- }
- 
-@@ -492,6 +528,7 @@ void
- IOSurfaceRootUserClient::free()
- {
- 	OSSafeReleaseNULL(fRefs);
-+	OSSafeReleaseNULL(fZombies);
- 	if (fLock != NULL) {
- 		IOLockFree(fLock);
- 		fLock = NULL;
-@@ -504,6 +541,9 @@ IOSurfaceRootUserClient::clientClose(void)
- {
- 	IOLockLock(fLock);
- 	fRefs->flushCollection();
-+	if (fZombies != NULL) {
-+		fZombies->flushCollection();
-+	}
- 	IOLockUnlock(fLock);
- 	terminate();
- 	return kIOReturnSuccess;
-@@ -511,11 +551,11 @@ IOSurfaceRootUserClient::clientClose(void)
- 
- /* Lock held. */
- SweetSurfaceRef *
--IOSurfaceRootUserClient::findRef(uint32_t id, unsigned int *index)
-+IOSurfaceRootUserClient::findRef(uint32_t id, unsigned int *index, bool detached)
- {
- 	for (unsigned int i = 0; i < fRefs->getCount(); i++) {
- 		SweetSurfaceRef *ref = (SweetSurfaceRef *)fRefs->getObject(i);
--		if (ref->surface->id == id) {
-+		if (ref->surface->id == id && ref->detached == detached) {
- 			if (index != NULL) {
- 				*index = i;
- 			}
-@@ -600,7 +640,7 @@ static void
+@@ -600,7 +630,7 @@ static void
  sweet_surface_fill_result(SweetSurface *s, SweetSurfaceRef *ref, uint8_t *out)
  {
  	bzero(out, SWEET_SURFACE_RESULT_SIZE);
@@ -176,7 +106,7 @@ index 6708085..1562dda 100644
  	put64(out, 0x08, ref->state->getAddress());
  	put64(out, 0x10, ref->state->getAddress() + SWEET_SURFACE_TIMESTAMPS);
  	put32(out, 0x18, s->id);
-@@ -717,7 +757,41 @@ IOSurfaceRootUserClient::create(IOExternalMethodArguments *args)
+@@ -717,7 +747,41 @@ IOSurfaceRootUserClient::create(IOExternalMethodArguments *args)
  	}
  	s->parentID = args->scalarInputCount > 0 ? (uint32_t)args->scalarInput[0] : 0;
  	ret = sweet_surface_layout(s, props);
@@ -219,7 +149,7 @@ index 6708085..1562dda 100644
  		IOBufferMemoryDescriptor *mem = NULL;
  		if ((uint64_t)OSAddAtomic64(s->allocSize, (volatile SInt64 *)&sweet_surface_wired) +
  		    s->allocSize <= SWEET_SURFACE_WIRED_MAX) {
-@@ -754,6 +828,329 @@ IOSurfaceRootUserClient::create(IOExternalMethodArguments *args)
+@@ -754,6 +818,329 @@ IOSurfaceRootUserClient::create(IOExternalMethodArguments *args)
  	return ret;
  }
  
@@ -549,7 +479,7 @@ index 6708085..1562dda 100644
  IOReturn
  IOSurfaceRootUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments *args,
      __unused IOExternalMethodDispatch *dispatch, __unused OSObject *target,
-@@ -772,6 +1169,46 @@ IOSurfaceRootUserClient::externalMethod(uint32_t selector, IOExternalMethodArgum
+@@ -772,6 +1159,46 @@ IOSurfaceRootUserClient::externalMethod(uint32_t selector, IOExternalMethodArgum
  	}
  	case kSweetSurfaceCreate:
  		return create(args);
@@ -596,7 +526,7 @@ index 6708085..1562dda 100644
  	case kSweetSurfaceLookup: {
  		SweetSurface *s = sweet_surface_copy((uint32_t)arg0);
  		IOReturn ret = kIOReturnNotFound;
-@@ -806,6 +1243,19 @@ IOSurfaceRootUserClient::externalMethod(uint32_t selector, IOExternalMethodArgum
+@@ -806,6 +1233,19 @@ IOSurfaceRootUserClient::externalMethod(uint32_t selector, IOExternalMethodArgum
  		return kIOReturnSuccess;
  	}
  	default:
@@ -616,63 +546,20 @@ index 6708085..1562dda 100644
  		/* Values, notifications, ownership, timestamps...: accept and ignore. */
  		for (uint32_t i = 0; i < args->scalarOutputCount; i++) {
  			args->scalarOutput[i] = 0;
-@@ -881,14 +1331,53 @@ IOSurfaceRootUserClient::trapUnlock(void *id, void *options, void *seedOut,
+@@ -881,6 +1321,12 @@ IOSurfaceRootUserClient::trapUnlock(void *id, void *options, void *seedOut,
  	return ret;
  }
  
-+/*
-+ * The framework drops a surface in two steps: trap 4 under its cache lock,
-+ * trap 5 after it. A lookup in between must get a view of its own (not "you
-+ * have it already"): trap 5 then takes the detached view away, not that one.
-+ * Without this, a lookup racing a release got -1 ("cached") and then lost its
-+ * state page under it (backboardd: IOSurfaceClientGetSeed on unmapped memory).
-+ */
 +IOReturn
-+IOSurfaceRootUserClient::trapDetach(void *id, void *, void *, void *, void *, void *)
++IOSurfaceRootUserClient::trapDetach(void *, void *, void *, void *, void *, void *)
 +{
-+	IOLockLock(fLock);
-+	SweetSurfaceRef *ref = findRef((uint32_t)(uintptr_t)id, NULL);
-+	if (ref != NULL) {
-+		ref->detached = true;
-+	}
-+	IOLockUnlock(fLock);
 +	return kIOReturnSuccess;
 +}
 +
  IOReturn
  IOSurfaceRootUserClient::trapRelease(void *id, void *, void *, void *, void *, void *)
  {
- 	unsigned int index;
- 	IOLockLock(fLock);
--	SweetSurfaceRef *ref = findRef((uint32_t)(uintptr_t)id, &index);
-+	SweetSurfaceRef *ref = findRef((uint32_t)(uintptr_t)id, &index, true);
-+	if (ref == NULL) {
-+		ref = findRef((uint32_t)(uintptr_t)id, &index);
-+	}
- 	if (ref != NULL && --ref->count == 0) {
--		fRefs->removeObject(index);     /* unmaps and drops the user count */
-+		/*
-+		 * The pixels are unmapped now; the state page (read-only) stays mapped a while.
-+		 * In backboardd another IOSurface object can still hold a framework client of
-+		 * the same surface after this one is released (CoreAnimation and the GL layer
-+		 * both keep surfaces): reading its seed from an unmapped page crashed
-+		 * backboardd in IOSurfaceClientGetSeed. The last 256 released views keep
-+		 * their page (16 KB each), the oldest goes first.
-+		 */
-+		OSSafeReleaseNULL(ref->data);
-+		sweet_surface_put(ref->surface);
-+		ref->released = true;
-+		ref->detached = false;
-+		if (fZombies != NULL && fZombies->setObject(ref)) {
-+			if (fZombies->getCount() > 256) {
-+				fZombies->removeObject(0);
-+			}
-+		}
-+		fRefs->removeObject(index);
- 	}
- 	IOLockUnlock(fLock);
- 	return ref != NULL ? kIOReturnSuccess : kIOReturnNotFound;
-@@ -899,7 +1388,13 @@ static IOExternalTrap sweet_surface_traps[] = {
+@@ -899,7 +1345,13 @@ static IOExternalTrap sweet_surface_traps[] = {
  	[kSweetSurfaceTrapDecrementUse]  = { NULL, (IOTrap) & IOSurfaceRootUserClient::trapUseCount },
  	[kSweetSurfaceTrapLock]          = { NULL, (IOTrap) & IOSurfaceRootUserClient::trapLock },
  	[kSweetSurfaceTrapUnlock]        = { NULL, (IOTrap) & IOSurfaceRootUserClient::trapUnlock },

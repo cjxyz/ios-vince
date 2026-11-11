@@ -99,3 +99,12 @@ fastboot boot artifacts/vince-boot.img       # nunca "fastboot flash boot"
 - Los reinicios y panics de XNU van a fastboot (0185), no a Android. Tras un panic, la pantalla se mantiene `vincepanicwait` s
   (por defecto 20) antes de reiniciar.
 - Volver a Android: `fastboot erase userdata` (o restaurar el backup) y reiniciar.
+
+## 7. Log de consola persistente (0191)
+Con `mmcrw=1`, el kernel copia cada 10 s el anillo de consola (8 MiB) a los **últimos 8 MiB de `userdata`**, detrás del volumen HFS+
+(`vinceconlog=0` lo desactiva; `vinceconlogsecs=N` cambia el intervalo). Para leerlo, arrancar el recovery (TWRP) y, en PowerShell:
+```
+.\adb shell 'p=/dev/block/bootdevice/by-name/userdata; n=$(blockdev --getsz $p); dd if=$p of=/tmp/vincelog.bin bs=512 skip=$((n-16385)) count=16385'
+.\adb pull /tmp/vincelog.bin
+```
+y en WSL: `python3 tools/vince-log-decode.py vincelog.bin boot.log`. Se ve el último arranque con `mmcrw=1`, hasta el último volcado.

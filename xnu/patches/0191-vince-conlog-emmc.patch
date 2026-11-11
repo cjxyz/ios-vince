@@ -1,0 +1,151 @@
+diff --git a/bsd/dev/vince_mmc.c b/bsd/dev/vince_mmc.c
+index 8df3fb7..6748d3d 100644
+--- a/bsd/dev/vince_mmc.c
++++ b/bsd/dev/vince_mmc.c
+@@ -32,6 +32,8 @@
+ #include <miscfs/devfs/devfs.h>
+ #include <kern/locks.h>
+ #include <kern/clock.h>
++#include <kern/thread.h>
++#include <kern/sched_prim.h>
+ #include <pexpert/pexpert.h>
+ #include <libkern/libkern.h>
+ 
+@@ -44,6 +46,10 @@ extern void vince_input_start(void);
+ /* bsd/dev/vince_ctl.c: clean halt when the shim asks (tools/vince_halt.py) */
+ extern void vince_ctl_start(void);
+ extern void vince_smd_start(void);
++extern char vince_conlog[1 << 23];              /* osfmk/console/serial_console.c: the console's RAM ring */
++extern volatile uint64_t vince_conlog_pos;
++static bool vince_conlog_fits(void);
++static void vince_conlog_start(bool fits);
+ 
+ #define SDCC1_PHYS      0x07824000ul    /* MCI core; the SDHCI registers start at +0x900 */
+ #define GCC_SDCC1_PHYS  0x01842000ul    /* SDCC1 BCR, then the apps RCG at +4 */
+@@ -875,6 +881,7 @@ vince_mmc_init(void)
+ 			}
+ 		}
+ 	}
++	bool conlog_fits = vm.rw && vince_conlog_fits();
+ 	lck_mtx_unlock(&vince_mmc_lock);
+ 	if (error) {
+ 		printf("VINCE MMC: eMMC root unavailable: %d (LK's last command CMD%u)\n", error, lk_cmd);
+@@ -899,9 +906,118 @@ vince_mmc_init(void)
+ 	vince_input_start();
+ 	vince_ctl_start();
+ 	vince_smd_start();
++	vince_conlog_start(conlog_fits);
+ 	return 0;
+ }
+ 
++/*
++ * Persistent console log: every vinceconlogsecs seconds (default 10; vinceconlog=0 turns it off) the new bytes of
++ * the console's RAM ring (vince_conlog, 8 MiB) go to the last 8 MiB of the partition, behind a header sector:
++ *   "VINCELOG" | u32 version 1 | u32 ring size | u64 bytes ever written | u64 flush sequence
++ * ring offset of byte n = n % ring size. Only with mmcrw=1, and only if that area lies past the end of the HFS+
++ * volume. Read it from a recovery with tools/vince-log-pull.sh: no more filming the screen to read the console.
++ */
++#define CONLOG_SIZE     ((uint32_t)sizeof(vince_conlog))
++#define CONLOG_SECTORS  (CONLOG_SIZE / SECTOR)
++
++struct vince_conlog_header {
++	char magic[8];
++	uint32_t version, size;
++	uint64_t total, seq;
++};
++
++static uint32_t conlog_secs = 10;
++static int conlog_chan;
++
++static void
++vince_conlog_thread(__unused void *arg, __unused wait_result_t wr)
++{
++	uint64_t base = vm.nsect - CONLOG_SECTORS - 1;  /* header sector, then the ring */
++	uint64_t flushed = 0, seq = 0;
++
++	printf("VINCE LOG: console ring to the last %u KiB of the partition (sector 0x%llx), every %u s\n",
++	    (CONLOG_SECTORS + 1) * SECTOR >> 10, base, conlog_secs);
++	for (;;) {
++		uint64_t deadline;
++
++		clock_interval_to_deadline(conlog_secs, NSEC_PER_SEC, &deadline);
++		(void)assert_wait_deadline(&conlog_chan, THREAD_UNINT, deadline);
++		thread_block(THREAD_CONTINUE_NULL);
++
++		uint64_t total = vince_conlog_pos;
++		if (total == flushed) {
++			continue;
++		}
++		uint64_t pos = total - flushed >= CONLOG_SIZE ? total - CONLOG_SIZE : flushed;
++		int error = 0;
++
++		lck_mtx_lock(&vince_mmc_lock);
++		while (pos < total && !error) {
++			uint32_t off = (uint32_t)(pos % CONLOG_SIZE);
++			uint32_t sec = off / SECTOR;
++			uint64_t need = ((uint64_t)off % SECTOR + (total - pos) + SECTOR - 1) / SECTOR;
++			uint32_t n = (uint32_t)MIN(MIN(need, (uint64_t)(CONLOG_SECTORS - sec)), (uint64_t)MAX_SECTORS);
++
++			memcpy(vince_mmc_bounce, vince_conlog + (uint64_t)sec * SECTOR, (size_t)n * SECTOR);
++			error = mmc_write_sectors(base + 1 + sec, n);
++			pos += (uint64_t)(sec + n) * SECTOR - off;
++		}
++		if (!error) {
++			struct vince_conlog_header h = {
++				.magic = { 'V', 'I', 'N', 'C', 'E', 'L', 'O', 'G' },
++				.version = 1, .size = CONLOG_SIZE, .total = total, .seq = ++seq,
++			};
++			bzero(vince_mmc_bounce, SECTOR);
++			memcpy(vince_mmc_bounce, &h, sizeof(h));
++			error = mmc_write_sectors(base, 1);
++		}
++		lck_mtx_unlock(&vince_mmc_lock);
++		if (error) {
++			printf("VINCE LOG: write failed (%d), stopping\n", error);
++			return;
++		}
++		flushed = total;
++	}
++}
++
++/* With the lock held after the write self-test: is the log area past the HFS+ volume? */
++static bool
++vince_conlog_fits(void)
++{
++	if (mmc_read_sectors(vm.first + 2, 1)) {
++		return false;
++	}
++	const uint8_t *vh = (const uint8_t *)vince_mmc_bounce;
++	uint32_t bsz = (uint32_t)vh[40] << 24 | (uint32_t)vh[41] << 16 | (uint32_t)vh[42] << 8 | vh[43];
++	uint32_t blocks = (uint32_t)vh[44] << 24 | (uint32_t)vh[45] << 16 | (uint32_t)vh[46] << 8 | vh[47];
++	uint64_t volume_end = (uint64_t)bsz * blocks / SECTOR + 4096;   /* + the write self-test's sector, with room */
++
++	return vm.nsect > CONLOG_SECTORS + 1 && vm.nsect - CONLOG_SECTORS - 1 >= volume_end;
++}
++
++static void
++vince_conlog_start(bool fits)
++{
++	uint32_t on = 1;
++	thread_t thread;
++
++	(void)PE_parse_boot_argn("vinceconlog", &on, sizeof(on));
++	if (!on || !vm.rw) {
++		return;
++	}
++	if (!fits) {
++		printf("VINCE LOG: no room past the HFS+ volume, no persistent console log\n");
++		return;
++	}
++	(void)PE_parse_boot_argn("vinceconlogsecs", &conlog_secs, sizeof(conlog_secs));
++	if (conlog_secs == 0 || conlog_secs > 60) {
++		conlog_secs = 10;
++	}
++	if (kernel_thread_start(vince_conlog_thread, NULL, &thread) == KERN_SUCCESS) {
++		thread_deallocate(thread);
++	}
++}
++
+ /* Root device for rd=mmcroot0, and the mmcprobe=1 check (IOFindBSDRoot). */
+ int vince_mmc_rootdev(dev_t *dev);
+ 
