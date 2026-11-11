@@ -242,6 +242,10 @@ def build_vince_adt(seed=None):
     # Product identity: iPhone X (iPhone10,3 / D22AP)
     product_props = d22ap_product()
     if product_props:
+        # sRGB, not the iPhone X's P3: with P3 CoreAnimation makes the display surfaces wide-gamut ('b3a8', 10-bit
+        # colour plus an alpha plane), which the GL renderer cannot attach (userland/gpu/eagl.c takes 'BGRA' only)
+        # and the panel shows black. ios-casuarina and ios-rebivincek do the same.
+        product_props = [(k, cstr('sRGB') if k == 'artwork-display-gamut' else v) for k, v in product_props]
         product = [node('product', [ph()] + product_props)]
     else:
         product = [node('product', [
